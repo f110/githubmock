@@ -2,6 +2,7 @@ package githubutil
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/google/go-github/v83/github"
@@ -14,14 +15,16 @@ func TestMock(t *testing.T) {
 		t.Run("Get", func(t *testing.T) {
 			m := NewMock()
 			repo := m.Repository("f110/gh-test")
-			repo.PullRequests(&github.PullRequest{
-				Number: new(1),
-				Title:  new(t.Name()),
-				Body:   new("PR description"),
-				Base:   &github.PullRequestBranch{Ref: new("master")},
-				Head:   &github.PullRequestBranch{Ref: new("feature-1")},
+			repo.PullRequests(&PullRequest{
+				PullRequest: github.PullRequest{
+					Number: new(1),
+					Title:  new(t.Name()),
+					Body:   new("PR description"),
+					Base:   &github.PullRequestBranch{Ref: new("master")},
+					Head:   &github.PullRequestBranch{Ref: new("feature-1")},
+				},
 			})
-			ghClient := m.Client()
+			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
 
 			pr, _, err := ghClient.PullRequests.Get(t.Context(), "f110", "gh-test", 1)
 			require.NoError(t, err)
@@ -31,7 +34,7 @@ func TestMock(t *testing.T) {
 		t.Run("Create", func(t *testing.T) {
 			m := NewMock()
 			m.Repository("f110/gh-test")
-			ghClient := m.Client()
+			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
 
 			pr, _, err := ghClient.PullRequests.Create(t.Context(), "f110", "gh-test", &github.NewPullRequest{})
 			require.NoError(t, err)
@@ -41,14 +44,16 @@ func TestMock(t *testing.T) {
 		t.Run("Edit", func(t *testing.T) {
 			m := NewMock()
 			repo := m.Repository("f110/gh-test")
-			ghClient := m.Client()
+			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
 			repo.PullRequests(
-				&github.PullRequest{
-					Number: new(1),
-					Title:  new(t.Name()),
-					Body:   new("PR description"),
-					Base:   &github.PullRequestBranch{Ref: new("master")},
-					Head:   &github.PullRequestBranch{Ref: new("feature-1")},
+				&PullRequest{
+					PullRequest: github.PullRequest{
+						Number: new(1),
+						Title:  new(t.Name()),
+						Body:   new("PR description"),
+						Base:   &github.PullRequestBranch{Ref: new("master")},
+						Head:   &github.PullRequestBranch{Ref: new("feature-1")},
+					},
 				},
 			)
 
@@ -63,11 +68,13 @@ func TestMock(t *testing.T) {
 		t.Run("CreateComment", func(t *testing.T) {
 			m := NewMock()
 			repo := m.Repository("f110/gh-test")
-			ghClient := m.Client()
+			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
 			repo.PullRequests(
-				&github.PullRequest{
-					Number: new(1),
-					Title:  new(t.Name()),
+				&PullRequest{
+					PullRequest: github.PullRequest{
+						Number: new(1),
+						Title:  new(t.Name()),
+					},
 				},
 			)
 
@@ -99,7 +106,7 @@ func TestMock(t *testing.T) {
 		require.NoError(t, err)
 		repo.Tags(&Tag{Name: "v1.0.0", Commit: commit})
 
-		ghClient := m.Client()
+		ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
 
 		t.Run("GetCommit", func(t *testing.T) {
 			commit, _, err := ghClient.Git.GetCommit(t.Context(), "f110", "gh-test", "HEAD")
@@ -171,7 +178,7 @@ func TestMock(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		ghClient := m.Client()
+		ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
 
 		t.Run("GetCommit", func(t *testing.T) {
 			repoCommit, _, err := ghClient.Repositories.GetCommit(t.Context(), "f110", "gh-test", "HEAD", &github.ListOptions{})
@@ -181,7 +188,7 @@ func TestMock(t *testing.T) {
 		})
 
 		t.Run("CreateStatus", func(t *testing.T) {
-			status, _, err := ghClient.Repositories.CreateStatus(t.Context(), "f110", "gh-test", "HEAD", &github.RepoStatus{State: new("success")})
+			status, _, err := ghClient.Repositories.CreateStatus(t.Context(), "f110", "gh-test", "HEAD", github.RepoStatus{State: new("success")})
 			require.NoError(t, err)
 			assert.NotEmpty(t, *status.State)
 		})
@@ -191,7 +198,7 @@ func TestMock(t *testing.T) {
 		t.Run("Create", func(t *testing.T) {
 			m := NewMock()
 			m.Repository("f110/gh-test")
-			ghClient := m.Client()
+			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
 
 			pr, _, err := ghClient.Issues.Create(t.Context(), "f110", "gh-test", &github.IssueRequest{})
 			require.NoError(t, err)
@@ -201,10 +208,12 @@ func TestMock(t *testing.T) {
 		t.Run("CreateComment", func(t *testing.T) {
 			m := NewMock()
 			repo := m.Repository("f110/gh-test")
-			ghClient := m.Client()
-			repo.Issues(&github.Issue{
-				Number: new(1),
-				Title:  new(t.Name()),
+			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
+			repo.Issues(&Issue{
+				Issue: github.Issue{
+					Number: new(1),
+					Title:  new(t.Name()),
+				},
 			})
 
 			comment, _, err := ghClient.Issues.CreateComment(t.Context(), "f110", "gh-test", 1, &github.IssueComment{

@@ -22,7 +22,7 @@ import (
 
 type Mock struct {
 	mu           sync.Mutex
-	Repositories map[string]*Repository
+	repositories map[string]*Repository
 }
 
 type Repository struct {
@@ -86,30 +86,26 @@ func newRepository() *Repository {
 }
 
 func NewMock() *Mock {
-	return &Mock{Repositories: make(map[string]*Repository)}
+	return &Mock{repositories: make(map[string]*Repository)}
 }
 
 func (m *Mock) Repository(name string) *Repository {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if r, ok := m.Repositories[name]; ok {
+	if r, ok := m.repositories[name]; ok {
 		return r
 	}
 
 	r := newRepository()
-	m.Repositories[name] = r
+	m.repositories[name] = r
 	return r
 }
 
-func (m *Mock) RegisteredTransport() *httpmock.MockTransport {
+func (m *Mock) RegisteredTransport() http.RoundTripper {
 	tr := httpmock.NewMockTransport()
-	m.RegisterResponder(tr)
+	m.registerResponder(tr)
 	return tr
-}
-
-func (m *Mock) Client() *github.Client {
-	return github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
 }
 
 func (r *Repository) AssertPullRequest(t *testing.T, number int) *PullRequest {
@@ -124,13 +120,11 @@ func (r *Repository) AssertPullRequest(t *testing.T, number int) *PullRequest {
 	return nil
 }
 
-func (r *Repository) PullRequests(pullRequests ...*github.PullRequest) {
+func (r *Repository) PullRequests(pullRequests ...*PullRequest) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, v := range pullRequests {
-		r.pullRequests = append(r.pullRequests, &PullRequest{
-			PullRequest: *v,
-		})
+		r.pullRequests = append(r.pullRequests, v)
 		if v.GetNumber() == 0 {
 			r.pullRequests[len(r.pullRequests)-1].Number = new(r.nextIndex())
 		}
@@ -148,13 +142,11 @@ func (r *Repository) GetPullRequest(num int) *PullRequest {
 	return nil
 }
 
-func (r *Repository) Issues(issues ...*github.Issue) {
+func (r *Repository) Issues(issues ...*Issue) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, v := range issues {
-		r.issues = append(r.issues, &Issue{
-			Issue: *v,
-		})
+		r.issues = append(r.issues, v)
 		if v.GetNumber() == 0 {
 			r.issues[len(r.issues)-1].Number = new(r.nextIndex())
 		}
@@ -241,7 +233,7 @@ func (r *Repository) Tags(tags ...*Tag) {
 	r.tags = append(r.tags, tags...)
 }
 
-func (m *Mock) RegisterResponder(tr *httpmock.MockTransport) {
+func (m *Mock) registerResponder(tr *httpmock.MockTransport) {
 	m.registerIssuesService(tr)
 	m.registerPullRequestService(tr)
 	m.registerGitService(tr)
@@ -276,9 +268,8 @@ func (m *Mock) registerPullRequestService(tr *httpmock.MockTransport) {
 			return newErrResponse(req, http.StatusBadRequest, err.Error())
 		}
 
-		newNumber := r.NextIndex()
 		pr := &github.PullRequest{
-			Number: &newNumber,
+			Number: new(r.NextIndex()),
 			Title:  reqPR.Title,
 			Body:   reqPR.Body,
 			Head: &github.PullRequestBranch{
@@ -288,7 +279,7 @@ func (m *Mock) registerPullRequestService(tr *httpmock.MockTransport) {
 				Ref: reqPR.Base,
 			},
 		}
-		r.PullRequests(pr)
+		r.PullRequests(&PullRequest{PullRequest: *pr})
 		return newMockJSONResponse(req, http.StatusOK, pr)
 	})
 
@@ -580,13 +571,12 @@ func (m *Mock) registerIssuesService(tr *httpmock.MockTransport) {
 			return newErrResponse(req, http.StatusBadRequest, err.Error())
 		}
 
-		newNumber := r.NextIndex()
 		issue := &github.Issue{
-			Number: &newNumber,
+			Number: new(r.NextIndex()),
 			Title:  reqIssue.Title,
 			Body:   reqIssue.Body,
 		}
-		r.Issues(issue)
+		r.Issues(&Issue{Issue: *issue})
 		return newMockJSONResponse(req, http.StatusOK, issue)
 	})
 	// Create a new comment
@@ -634,7 +624,7 @@ func (m *Mock) findRepository(p string) *Repository {
 	s := strings.Split(p, "/")
 	name := fmt.Sprintf("%s/%s", s[2], s[3])
 
-	if r, ok := m.Repositories[name]; ok {
+	if r, ok := m.repositories[name]; ok {
 		return r
 	}
 	return nil
