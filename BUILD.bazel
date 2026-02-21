@@ -11,11 +11,11 @@ go_library(
     importpath = "go.f110.dev/githubmock",
     visibility = ["//visibility:public"],
     deps = [
-        ":xerrors",
         "@com_github_go_git_go_git_v5//plumbing",
         "@com_github_google_go_github_v83//github",
         "@com_github_jarcoal_httpmock//:httpmock",
         "@com_github_stretchr_testify//assert",
+        "@dev_f110_go_xerrors//:xerrors",
     ],
 )
 
