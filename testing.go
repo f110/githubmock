@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -17,7 +18,6 @@ import (
 	"github.com/google/go-github/v83/github"
 	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
-	"go.f110.dev/xerrors"
 )
 
 type Mock struct {
@@ -172,13 +172,13 @@ func (r *Repository) Commits(commits ...*Commit) error {
 	for _, v := range commits {
 		if len(v.Parents) == 0 {
 			if rootCommit != nil {
-				return xerrors.New("multiple root commits are found")
+				return errors.New("multiple root commits are found")
 			}
 			rootCommit = v
 		}
 		if v.IsHead {
 			if r.headCommit != nil {
-				return xerrors.New("multiple head commits are found")
+				return errors.New("multiple head commits are found")
 			}
 			r.headCommit = v
 		}
@@ -214,7 +214,7 @@ func (r *Repository) Commits(commits ...*Commit) error {
 	}
 	if rootCommit != nil {
 		if r.rootCommit != nil {
-			return xerrors.New("multiple root commits are found")
+			return errors.New("multiple root commits are found")
 		}
 		r.rootCommit = rootCommit
 	}

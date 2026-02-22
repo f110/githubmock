@@ -15,7 +15,6 @@ go_library(
         "@com_github_google_go_github_v83//github",
         "@com_github_jarcoal_httpmock//:httpmock",
         "@com_github_stretchr_testify//assert",
-        "@dev_f110_go_xerrors//:xerrors",
     ],
 )
 

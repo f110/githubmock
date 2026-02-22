@@ -6,4 +6,4 @@ go_sdk.from_file(go_mod = "//:go.mod")
 
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")
-use_repo(go_deps, "com_github_go_git_go_git_v5", "com_github_google_go_github_v83", "com_github_jarcoal_httpmock", "com_github_stretchr_testify", "dev_f110_go_xerrors")
+use_repo(go_deps, "com_github_go_git_go_git_v5", "com_github_google_go_github_v83", "com_github_jarcoal_httpmock", "com_github_stretchr_testify")
