@@ -36,51 +36,6 @@ type Repository struct {
 	rootCommit *Commit
 }
 
-type Commit struct {
-	Hash    string    `json:"-"`
-	Parents []*Commit `json:"-"`
-	Files   []*File   `json:"-"`
-	IsHead  bool      `json:"-"`
-
-	files      []*File
-	ghCommit   *github.Commit
-	ghStatuses []*github.RepoStatus
-}
-
-type fileType int
-
-const (
-	fileTypeRegular fileType = iota
-	fileTypeDir
-)
-
-type File struct {
-	Name string
-	Body []byte
-
-	sha  string
-	mode fileType
-}
-
-type PullRequest struct {
-	github.PullRequest
-
-	Comments []*github.PullRequestComment `json:"-"`
-}
-
-type Issue struct {
-	github.Issue
-
-	Comments []*github.IssueComment `json:"-"`
-}
-
-type Tag struct {
-	Name   string
-	Commit *Commit
-
-	ghTag *github.Tag
-}
-
 func newRepository() *Repository {
 	return &Repository{}
 }
@@ -185,10 +140,10 @@ func (r *Repository) Commits(commits ...*Commit) error {
 
 		sha := v.Hash
 		if sha == "" {
-			sha = NewHash()
+			sha = newHash()
 		}
 		v.ghCommit = &github.Commit{SHA: new(sha)}
-		v.files = []*File{{Name: "", sha: NewHash(), mode: fileTypeDir}} // Root directory
+		v.files = []*File{{Name: "", sha: newHash(), mode: fileTypeDir}} // Root directory
 		v.ghCommit.Tree = &github.Tree{SHA: new(v.files[0].sha)}
 		for _, f := range v.Files {
 			if f.Name == "" {
@@ -653,27 +608,6 @@ func (r *Repository) nextIndex() int {
 	return lastIndex + 1
 }
 
-func (c *Commit) addDir(dir string) {
-	for _, v := range c.files {
-		if v.Name == dir {
-			return
-		}
-	}
-	c.files = append(c.files, &File{
-		Name: dir,
-		sha:  NewHash(),
-		mode: fileTypeDir,
-	})
-}
-
-func (c *Commit) addFile(file *File) {
-	if file.sha == "" {
-		file.sha = NewHash()
-	}
-	file.mode = fileTypeRegular
-	c.files = append(c.files, file)
-}
-
 func newNotFoundResponse(req *http.Request) (*http.Response, error) {
 	return newErrResponse(req, http.StatusNotFound, "Not found")
 }
@@ -696,7 +630,7 @@ func newMockJSONResponse(req *http.Request, status int, body any) (*http.Respons
 	return res, err
 }
 
-func NewHash() string {
+func newHash() string {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		panic(err)
