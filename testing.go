@@ -1,4 +1,4 @@
-package githubutil
+package githubmock
 
 import (
 	"crypto/rand"
