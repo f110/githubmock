@@ -304,7 +304,7 @@ func (m *Mock) registerPullRequestService(tr *httpmock.MockTransport) {
 			return newErrResponse(req, http.StatusBadRequest, err.Error())
 		}
 
-		pr.Comments = append(pr.Comments, &comment)
+		pr.comments = append(pr.comments, &comment)
 		return newMockJSONResponse(req, http.StatusOK, comment)
 	})
 }
@@ -550,7 +550,7 @@ func (m *Mock) registerIssuesService(tr *httpmock.MockTransport) {
 				return newErrResponse(req, http.StatusBadRequest, err.Error())
 			}
 
-			issue.Comments = append(issue.Comments, &comment)
+			issue.comments = append(issue.comments, &comment)
 			return newMockJSONResponse(req, http.StatusOK, comment)
 		}
 
@@ -561,7 +561,7 @@ func (m *Mock) registerIssuesService(tr *httpmock.MockTransport) {
 				return newErrResponse(req, http.StatusBadRequest, err.Error())
 			}
 
-			pr.Comments = append(pr.Comments, &github.PullRequestComment{
+			pr.comments = append(pr.comments, &github.PullRequestComment{
 				Body: comment.Body,
 			})
 			return newMockJSONResponse(req, http.StatusOK, comment)

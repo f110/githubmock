@@ -1,7 +1,6 @@
 package githubmock
 
 import (
-	"context"
 	"net/http"
 	"testing"
 
@@ -71,14 +70,14 @@ func TestMock(t *testing.T) {
 					Title(t.Name()),
 			)
 
-			comment, _, err := ghClient.PullRequests.CreateComment(context.Background(), "f110", "gh-test", 1, &github.PullRequestComment{
+			comment, _, err := ghClient.PullRequests.CreateComment(t.Context(), "f110", "gh-test", 1, &github.PullRequestComment{
 				Body: new("Comment"),
 			})
 			require.NoError(t, err)
 			assert.NotNil(t, comment)
 			pr := repo.GetPullRequest(1)
 			require.NotNil(t, pr)
-			assert.Len(t, pr.Comments, 1)
+			assert.Len(t, pr.comments, 1)
 		})
 	})
 
@@ -215,7 +214,7 @@ func TestMock(t *testing.T) {
 			assert.NotNil(t, comment)
 			issue := repo.GetIssue(1)
 			require.NotNil(t, issue)
-			assert.Len(t, issue.Comments, 1)
+			assert.Len(t, issue.comments, 1)
 		})
 	})
 }

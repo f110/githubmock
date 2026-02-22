@@ -41,6 +41,16 @@ func (c *Commit) IsHead() *Commit {
 	return c
 }
 
+func (c *Commit) Statuses(statuses ...*CommitStatus) *Commit {
+	for _, v := range statuses {
+		c.ghStatuses = append(c.ghStatuses, &github.RepoStatus{
+			State:       new(string(v.State)),
+			Description: new(v.Description),
+		})
+	}
+	return c
+}
+
 func (c *Commit) addDir(dir string) {
 	for _, v := range c.files {
 		if v.Name == dir {
@@ -76,11 +86,25 @@ type File struct {
 	mode fileType
 }
 
+type CommitState string
+
+const (
+	CommitStatePending CommitState = "pending"
+	CommitStateSuccess CommitState = "success"
+	CommitStateFailure CommitState = "failure"
+	CommitStateError   CommitState = "error"
+)
+
+type CommitStatus struct {
+	State       CommitState
+	Description string
+}
+
 type PullRequest struct {
 	ghPullRequest *github.PullRequest
 	headRepo      *Repository
-
-	Comments []*github.PullRequestComment `json:"-"`
+	comments      []*github.PullRequestComment
+	reviews       []*github.PullRequestReview
 }
 
 func NewPullRequest() *PullRequest {
@@ -113,9 +137,19 @@ func (pr *PullRequest) Head(repo *Repository, ref string) *PullRequest {
 	return pr
 }
 
+func (pr *PullRequest) Comments(comments []*Comment) *PullRequest {
+	for _, v := range comments {
+		pr.comments = append(pr.comments, &github.PullRequestComment{
+			User: &github.User{Login: new(v.Author)},
+			Body: new(v.Body),
+		})
+	}
+	return pr
+}
+
 type Issue struct {
 	ghIssue  *github.Issue
-	Comments []*github.IssueComment `json:"-"`
+	comments []*github.IssueComment
 }
 
 func NewIssue() *Issue {
@@ -129,6 +163,16 @@ func (i *Issue) Number(v int) *Issue {
 
 func (i *Issue) Title(v string) *Issue {
 	i.ghIssue.Title = new(v)
+	return i
+}
+
+func (i *Issue) Comments(comments []*Comment) *Issue {
+	for _, v := range comments {
+		i.comments = append(i.comments, &github.IssueComment{
+			User: &github.User{Login: new(v.Author)},
+			Body: new(v.Body),
+		})
+	}
 	return i
 }
 
@@ -155,4 +199,9 @@ func (t *Tag) Commit(c *Commit) *Tag {
 func (t *Tag) toGithubTag() *github.Tag {
 	t.ghTag.SHA = t.commit.ghCommit.SHA
 	return t.ghTag
+}
+
+type Comment struct {
+	Author string
+	Body   string
 }
