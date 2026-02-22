@@ -15,15 +15,14 @@ func TestMock(t *testing.T) {
 		t.Run("Get", func(t *testing.T) {
 			m := NewMock()
 			repo := m.Repository("f110/gh-test")
-			repo.PullRequests(&PullRequest{
-				PullRequest: github.PullRequest{
-					Number: new(1),
-					Title:  new(t.Name()),
-					Body:   new("PR description"),
-					Base:   &github.PullRequestBranch{Ref: new("master")},
-					Head:   &github.PullRequestBranch{Ref: new("feature-1")},
-				},
-			})
+			repo.PullRequests(
+				NewPullRequest().
+					Number(1).
+					Title(t.Name()).
+					Body("PR description").
+					Base("master").
+					Head(nil, "feature-1"),
+			)
 			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
 
 			pr, _, err := ghClient.PullRequests.Get(t.Context(), "f110", "gh-test", 1)
@@ -46,15 +45,12 @@ func TestMock(t *testing.T) {
 			repo := m.Repository("f110/gh-test")
 			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
 			repo.PullRequests(
-				&PullRequest{
-					PullRequest: github.PullRequest{
-						Number: new(1),
-						Title:  new(t.Name()),
-						Body:   new("PR description"),
-						Base:   &github.PullRequestBranch{Ref: new("master")},
-						Head:   &github.PullRequestBranch{Ref: new("feature-1")},
-					},
-				},
+				NewPullRequest().
+					Number(1).
+					Title(t.Name()).
+					Body("PR description").
+					Base("master").
+					Head(nil, "feature-1"),
 			)
 
 			pr, _, err := ghClient.PullRequests.Edit(t.Context(), "f110", "gh-test", 1, &github.PullRequest{
@@ -70,12 +66,9 @@ func TestMock(t *testing.T) {
 			repo := m.Repository("f110/gh-test")
 			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
 			repo.PullRequests(
-				&PullRequest{
-					PullRequest: github.PullRequest{
-						Number: new(1),
-						Title:  new(t.Name()),
-					},
-				},
+				NewPullRequest().
+					Number(1).
+					Title(t.Name()),
 			)
 
 			comment, _, err := ghClient.PullRequests.CreateComment(context.Background(), "f110", "gh-test", 1, &github.PullRequestComment{
@@ -92,19 +85,18 @@ func TestMock(t *testing.T) {
 	t.Run("GitService", func(t *testing.T) {
 		m := NewMock()
 		repo := m.Repository("f110/gh-test")
-		commit := &Commit{
-			IsHead: true,
-			Files: []*File{
-				{Name: ".github/CODEOWNERS"},
-				{Name: "/docs/sample/README.md"},
-				{Name: ".build/mirror.cue"},
-				{Name: ".build/test.cue"},
-				{Name: "README.md", Body: []byte("README")},
-			},
-		}
+		commit := NewCommit().
+			IsHead().
+			Files(
+				&File{Name: ".github/CODEOWNERS"},
+				&File{Name: "/docs/sample/README.md"},
+				&File{Name: ".build/mirror.cue"},
+				&File{Name: ".build/test.cue"},
+				&File{Name: "README.md", Body: []byte("README")},
+			)
 		err := repo.Commits(commit)
 		require.NoError(t, err)
-		repo.Tags(&Tag{Name: "v1.0.0", Commit: commit})
+		repo.Tags(NewTag().Name("v1.0.0").Commit(commit))
 
 		ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
 
@@ -172,10 +164,11 @@ func TestMock(t *testing.T) {
 	t.Run("RepositoriesService", func(t *testing.T) {
 		m := NewMock()
 		repo := m.Repository("f110/gh-test")
-		err := repo.Commits(&Commit{
-			IsHead: true,
-			Files:  []*File{{Name: "README.md", Body: []byte("README")}},
-		})
+		err := repo.Commits(
+			NewCommit().
+				IsHead().
+				Files(&File{Name: "README.md", Body: []byte("README")}),
+		)
 		require.NoError(t, err)
 
 		ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
@@ -209,12 +202,11 @@ func TestMock(t *testing.T) {
 			m := NewMock()
 			repo := m.Repository("f110/gh-test")
 			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
-			repo.Issues(&Issue{
-				Issue: github.Issue{
-					Number: new(1),
-					Title:  new(t.Name()),
-				},
-			})
+			repo.Issues(
+				NewIssue().
+					Number(1).
+					Title(t.Name()),
+			)
 
 			comment, _, err := ghClient.Issues.CreateComment(t.Context(), "f110", "gh-test", 1, &github.IssueComment{
 				Body: new("Comment"),

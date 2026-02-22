@@ -66,7 +66,7 @@ func (m *Mock) RegisteredTransport() http.RoundTripper {
 func (r *Repository) AssertPullRequest(t *testing.T, number int) *PullRequest {
 	t.Helper()
 	for _, v := range r.pullRequests {
-		if v.GetNumber() == number {
+		if v.ghPullRequest.GetNumber() == number {
 			return v
 		}
 	}
@@ -80,8 +80,8 @@ func (r *Repository) PullRequests(pullRequests ...*PullRequest) {
 	defer r.mu.Unlock()
 	for _, v := range pullRequests {
 		r.pullRequests = append(r.pullRequests, v)
-		if v.GetNumber() == 0 {
-			r.pullRequests[len(r.pullRequests)-1].Number = new(r.nextIndex())
+		if v.ghPullRequest.GetNumber() == 0 {
+			v.ghPullRequest.Number = new(r.nextIndex())
 		}
 	}
 }
@@ -90,7 +90,7 @@ func (r *Repository) GetPullRequest(num int) *PullRequest {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, v := range r.pullRequests {
-		if v.GetNumber() == num {
+		if v.ghPullRequest.GetNumber() == num {
 			return v
 		}
 	}
@@ -102,8 +102,8 @@ func (r *Repository) Issues(issues ...*Issue) {
 	defer r.mu.Unlock()
 	for _, v := range issues {
 		r.issues = append(r.issues, v)
-		if v.GetNumber() == 0 {
-			r.issues[len(r.issues)-1].Number = new(r.nextIndex())
+		if v.ghIssue.GetNumber() == 0 {
+			v.ghIssue.Number = new(r.nextIndex())
 		}
 	}
 }
@@ -112,7 +112,7 @@ func (r *Repository) GetIssue(num int) *Issue {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, v := range r.issues {
-		if v.GetNumber() == num {
+		if v.ghIssue.GetNumber() == num {
 			return v
 		}
 	}
@@ -123,29 +123,27 @@ func (r *Repository) Commits(commits ...*Commit) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	var rootCommit *Commit
-	for _, v := range commits {
-		if len(v.Parents) == 0 {
+	newCommits := append(r.commits, commits...)
+	var rootCommit, headCommit *Commit
+	for _, v := range newCommits {
+		if len(v.parents) == 0 {
 			if rootCommit != nil {
 				return errors.New("multiple root commits are found")
 			}
 			rootCommit = v
 		}
-		if v.IsHead {
-			if r.headCommit != nil {
+		if v.isHead {
+			if headCommit != nil {
 				return errors.New("multiple head commits are found")
 			}
-			r.headCommit = v
+			headCommit = v
 		}
 
-		sha := v.Hash
-		if sha == "" {
-			sha = newHash()
+		if v.ghCommit.GetSHA() == "" {
+			v.ghCommit.SHA = new(newHash())
 		}
-		v.ghCommit = &github.Commit{SHA: new(sha)}
-		v.files = []*File{{Name: "", sha: newHash(), mode: fileTypeDir}} // Root directory
 		v.ghCommit.Tree = &github.Tree{SHA: new(v.files[0].sha)}
-		for _, f := range v.Files {
+		for _, f := range v.files {
 			if f.Name == "" {
 				continue
 			}
@@ -167,24 +165,22 @@ func (r *Repository) Commits(commits ...*Commit) error {
 			v.addFile(f)
 		}
 	}
-	if rootCommit != nil {
-		if r.rootCommit != nil {
-			return errors.New("multiple root commits are found")
+
+	r.commits = newCommits
+	for _, v := range r.commits {
+		if len(v.parents) == 0 {
+			r.rootCommit = v
 		}
-		r.rootCommit = rootCommit
+		if v.isHead {
+			r.headCommit = v
+		}
 	}
-	r.commits = append(r.commits, commits...)
 	return nil
 }
 
 func (r *Repository) Tags(tags ...*Tag) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, v := range tags {
-		v.ghTag = &github.Tag{
-			Tag: new(v.Name),
-		}
-	}
 	r.tags = append(r.tags, tags...)
 }
 
@@ -209,7 +205,7 @@ func (m *Mock) registerPullRequestService(tr *httpmock.MockTransport) {
 			return newErrResponse(req, http.StatusBadRequest, err.Error())
 		}
 		pr := r.GetPullRequest(num)
-		return newMockJSONResponse(req, http.StatusOK, pr)
+		return newMockJSONResponse(req, http.StatusOK, pr.ghPullRequest)
 	})
 	// Create a pull request
 	// POST /repos/octocat/example/pulls
@@ -234,7 +230,7 @@ func (m *Mock) registerPullRequestService(tr *httpmock.MockTransport) {
 				Ref: reqPR.Base,
 			},
 		}
-		r.PullRequests(&PullRequest{PullRequest: *pr})
+		r.PullRequests(&PullRequest{ghPullRequest: pr})
 		return newMockJSONResponse(req, http.StatusOK, pr)
 	})
 
@@ -266,25 +262,25 @@ func (m *Mock) registerPullRequestService(tr *httpmock.MockTransport) {
 		}
 
 		if reqPR.Title != nil {
-			pr.Title = reqPR.Title
+			pr.ghPullRequest.Title = reqPR.Title
 		}
 		if reqPR.Body != nil {
-			pr.Body = reqPR.Body
+			pr.ghPullRequest.Body = reqPR.Body
 		}
 		if reqPR.State != nil {
-			pr.State = reqPR.State
+			pr.ghPullRequest.State = reqPR.State
 		}
 		if reqPR.Base != nil {
-			if pr.Base == nil {
-				pr.Base = &github.PullRequestBranch{}
+			if pr.ghPullRequest.Base == nil {
+				pr.ghPullRequest.Base = &github.PullRequestBranch{}
 			}
-			pr.Base.Ref = reqPR.Base
+			pr.ghPullRequest.Base.Ref = reqPR.Base
 		}
 		if reqPR.MaintainerCanModify != nil {
-			pr.MaintainerCanModify = reqPR.MaintainerCanModify
+			pr.ghPullRequest.MaintainerCanModify = reqPR.MaintainerCanModify
 		}
 
-		return newMockJSONResponse(req, http.StatusOK, pr)
+		return newMockJSONResponse(req, http.StatusOK, pr.ghPullRequest)
 	})
 
 	// Create a new comment
@@ -430,11 +426,11 @@ func (m *Mock) registerGitService(tr *httpmock.MockTransport) {
 		ref := plumbing.ReferenceName("refs/" + strings.Join(s[6:], "/"))
 		if ref.IsTag() {
 			for _, v := range r.tags {
-				if v.Name == ref.Short() {
+				if v.ghTag.GetTag() == ref.Short() {
 					reference := &github.Reference{
 						Ref: new(ref.String()),
 						Object: &github.GitObject{
-							SHA:  v.Commit.ghCommit.SHA,
+							SHA:  v.commit.ghCommit.SHA,
 							Type: new("commit"),
 						},
 					}
@@ -531,7 +527,7 @@ func (m *Mock) registerIssuesService(tr *httpmock.MockTransport) {
 			Title:  reqIssue.Title,
 			Body:   reqIssue.Body,
 		}
-		r.Issues(&Issue{Issue: *issue})
+		r.Issues(&Issue{ghIssue: issue})
 		return newMockJSONResponse(req, http.StatusOK, issue)
 	})
 	// Create a new comment
@@ -595,13 +591,13 @@ func (r *Repository) NextIndex() int {
 func (r *Repository) nextIndex() int {
 	var lastIndex int
 	for _, v := range r.pullRequests {
-		if v.GetNumber() > lastIndex {
-			lastIndex = v.GetNumber()
+		if v.ghPullRequest.GetNumber() > lastIndex {
+			lastIndex = v.ghPullRequest.GetNumber()
 		}
 	}
 	for _, v := range r.issues {
-		if v.GetNumber() > lastIndex {
-			lastIndex = v.GetNumber()
+		if v.ghIssue.GetNumber() > lastIndex {
+			lastIndex = v.ghIssue.GetNumber()
 		}
 	}
 
