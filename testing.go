@@ -7,8 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
-	"regexp"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,11 +17,12 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/google/go-github/v83/github"
-	"github.com/jarcoal/httpmock"
 	"github.com/stretchr/testify/assert"
 )
 
 type Mock struct {
+	Logger *slog.Logger
+
 	mu           sync.Mutex
 	repositories map[string]*Repository
 }
@@ -41,7 +43,7 @@ func newRepository() *Repository {
 }
 
 func NewMock() *Mock {
-	return &Mock{repositories: make(map[string]*Repository)}
+	return &Mock{Logger: slog.New(slog.DiscardHandler), repositories: make(map[string]*Repository)}
 }
 
 func (m *Mock) Repository(name string) *Repository {
@@ -57,10 +59,15 @@ func (m *Mock) Repository(name string) *Repository {
 	return r
 }
 
-func (m *Mock) RegisteredTransport() http.RoundTripper {
-	tr := httpmock.NewMockTransport()
-	m.registerResponder(tr)
-	return tr
+func (m *Mock) Transport() http.RoundTripper {
+	mux := http.NewServeMux()
+	m.RegisterHandler(mux)
+
+	return &transport{handler: mux}
+}
+
+func (m *Mock) RegisterHandler(mux *http.ServeMux) {
+	m.registerMultiplexer(mux)
 }
 
 func (r *Repository) AssertPullRequest(t *testing.T, number int) *PullRequest {
@@ -184,39 +191,52 @@ func (r *Repository) Tags(tags ...*Tag) {
 	r.tags = append(r.tags, tags...)
 }
 
-func (m *Mock) registerResponder(tr *httpmock.MockTransport) {
-	m.registerIssuesService(tr)
-	m.registerPullRequestService(tr)
-	m.registerGitService(tr)
-	m.registerRepositoriesService(tr)
+func (m *Mock) registerMultiplexer(mux *http.ServeMux) {
+	m.registerPullRequestService(mux)
+	m.registerIssuesService(mux)
+	m.registerRepositoriesService(mux)
+	m.registerGitService(mux)
 }
 
-func (m *Mock) registerPullRequestService(tr *httpmock.MockTransport) {
+func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 	// Get a pull request
 	// GET /repos/octocat/example/pulls/1
-	tr.RegisterRegexpResponder(http.MethodGet, regexp.MustCompile(`/repos/[^/?]+/[^/?]+/pulls/\d+$`), func(req *http.Request) (*http.Response, error) {
-		r := m.findRepository(req.URL.Path)
+	mux.HandleFunc("GET /repos/{owner}/{repo}/pulls/{number}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
 		if r == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
-		s := strings.Split(req.URL.Path, "/")
-		num, err := strconv.Atoi(s[5])
+		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
-			return newErrResponse(req, http.StatusBadRequest, err.Error())
+			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 		pr := r.GetPullRequest(num)
-		return newMockJSONResponse(req, http.StatusOK, pr.ghPullRequest)
+		if err := jsonResponse(w, http.StatusOK, pr.ghPullRequest); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode pull request response", slog.Any("err", err))
+		}
 	})
 	// Create a pull request
 	// POST /repos/octocat/example/pulls
-	tr.RegisterRegexpResponder(http.MethodPost, regexp.MustCompile(`/repos/[^/?]+/[^/?]+/pulls$`), func(req *http.Request) (*http.Response, error) {
-		r := m.findRepository(req.URL.Path)
+	mux.HandleFunc("POST /repos/{owner}/{repo}/pulls", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
 		if r == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 		var reqPR github.NewPullRequest
 		if err := json.NewDecoder(req.Body).Decode(&reqPR); err != nil {
-			return newErrResponse(req, http.StatusBadRequest, err.Error())
+			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 
 		pr := &github.PullRequest{
@@ -231,24 +251,33 @@ func (m *Mock) registerPullRequestService(tr *httpmock.MockTransport) {
 			},
 		}
 		r.PullRequests(&PullRequest{ghPullRequest: pr})
-		return newMockJSONResponse(req, http.StatusOK, pr)
+		if err := jsonResponse(w, http.StatusOK, pr); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode pull request response", slog.Any("err", err))
+		}
 	})
-
 	// Update a pull request
 	// PATCH /repos/octocat/example/pulls/1
-	tr.RegisterRegexpResponder(http.MethodPatch, regexp.MustCompile(`/repos/[^/?]+/[^/?]+/pulls/\d+$`), func(req *http.Request) (*http.Response, error) {
-		r := m.findRepository(req.URL.Path)
+	mux.HandleFunc("PATCH /repos/{owner}/{repo}/pulls/{number}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
 		if r == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
-		s := strings.Split(req.URL.Path, "/")
-		num, err := strconv.Atoi(s[5])
+		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
-			return newErrResponse(req, http.StatusBadRequest, err.Error())
+			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 		pr := r.GetPullRequest(num)
 		if pr == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 		var reqPR struct {
 			Title               *string `json:"title,omitempty"`
@@ -258,7 +287,10 @@ func (m *Mock) registerPullRequestService(tr *httpmock.MockTransport) {
 			MaintainerCanModify *bool   `json:"maintainer_can_modify,omitempty"`
 		}
 		if err := json.NewDecoder(req.Body).Decode(&reqPR); err != nil {
-			return newErrResponse(req, http.StatusBadRequest, err.Error())
+			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 
 		if reqPR.Title != nil {
@@ -280,77 +312,113 @@ func (m *Mock) registerPullRequestService(tr *httpmock.MockTransport) {
 			pr.ghPullRequest.MaintainerCanModify = reqPR.MaintainerCanModify
 		}
 
-		return newMockJSONResponse(req, http.StatusOK, pr.ghPullRequest)
+		if err := jsonResponse(w, http.StatusOK, pr.ghPullRequest); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode pull request response", slog.Any("err", err))
+		}
 	})
-
 	// Create a new comment
 	// POST /repos/octocat/example/pulls/1/comments
-	tr.RegisterRegexpResponder(http.MethodPost, regexp.MustCompile(`/repos/[^/?]+/[^/?]+/pulls/\d+/comments`), func(req *http.Request) (*http.Response, error) {
-		r := m.findRepository(req.URL.Path)
+	mux.HandleFunc("POST /repos/{owner}/{repo}/pulls/{number}/comments", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
 		if r == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
-		s := strings.Split(req.URL.Path, "/")
-		num, err := strconv.Atoi(s[5])
+		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
-			return newErrResponse(req, http.StatusBadRequest, err.Error())
+			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 		pr := r.GetPullRequest(num)
 		if pr == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 		var comment github.PullRequestComment
 		if err := json.NewDecoder(req.Body).Decode(&comment); err != nil {
-			return newErrResponse(req, http.StatusBadRequest, err.Error())
+			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 
 		pr.comments = append(pr.comments, &comment)
-		return newMockJSONResponse(req, http.StatusOK, comment)
+		if err := jsonResponse(w, http.StatusOK, comment); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode pull request response", slog.Any("err", err))
+		}
+		return
 	})
 }
 
-func (m *Mock) registerGitService(tr *httpmock.MockTransport) {
+func (m *Mock) registerGitService(mux *http.ServeMux) {
 	// Get commit
 	// GET /repos/octocat/example/git/commits/{sha}
-	tr.RegisterRegexpResponder(http.MethodGet, regexp.MustCompile(`/repos/[^/?]+/[^/?]+/git/commits/[^/?]+$`), func(req *http.Request) (*http.Response, error) {
-		r := m.findRepository(req.URL.Path)
+	mux.HandleFunc("GET /repos/{owner}/{repo}/git/commits/{sha}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
 		if r == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 		s := strings.Split(req.URL.Path, "/")
 		sha := s[len(s)-1]
 		if sha == "HEAD" { // Special case
 			if r.headCommit == nil {
-				return newNotFoundResponse(req)
+				if err := notFoundResponse(w); err != nil {
+					m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+				}
+				return
 			}
-			return newMockJSONResponse(req, http.StatusOK, r.headCommit.ghCommit)
+			if err := jsonResponse(w, http.StatusOK, r.headCommit.ghCommit); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 		for _, v := range r.commits {
 			if v.ghCommit.GetSHA() == sha {
-				return newMockJSONResponse(req, http.StatusOK, v.ghCommit)
+				if err := jsonResponse(w, http.StatusOK, v.ghCommit); err != nil {
+					m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+				}
+				return
 			}
 		}
-		return newNotFoundResponse(req)
+		if err := notFoundResponse(w); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+		}
+		return
 	})
 	// Get tree
 	// Get /repos/octocat/example/git/trees/{sha}
-	tr.RegisterRegexpResponder(http.MethodGet, regexp.MustCompile(`/repos/[^/?]+/[^/?]+/git/trees/[^/?]+$`), func(req *http.Request) (*http.Response, error) {
-		r := m.findRepository(req.URL.Path)
+	mux.HandleFunc("GET /repos/{owner}/{repo}/git/trees/{sha}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
 		if r == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
-		s := strings.Split(req.URL.Path, "/")
+		sha := req.PathValue("sha")
 		var prefix *string
 		for _, c := range r.commits {
 			for _, v := range c.files {
-				if v.sha == s[len(s)-1] {
+				if v.sha == sha {
 					prefix = new(v.Name)
 					break
 				}
 			}
 		}
 		if prefix == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 
 		var entries []*github.TreeEntry
@@ -392,35 +460,47 @@ func (m *Mock) registerGitService(tr *httpmock.MockTransport) {
 			}
 		}
 		tree := &github.Tree{
-			SHA:     new(s[len(s)-1]),
+			SHA:     new(sha),
 			Entries: entries,
 		}
-		return newMockJSONResponse(req, http.StatusOK, tree)
+		if err := jsonResponse(w, http.StatusOK, tree); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+		}
+		return
 	})
 	// Get blob
 	// GET /repos/octocat/example/git/blobs/{sha}
-	tr.RegisterRegexpResponder(http.MethodGet, regexp.MustCompile(`/repos/[^/?]+/[^/?]+/git/blobs/[^/?]+$`), func(req *http.Request) (*http.Response, error) {
-		r := m.findRepository(req.URL.Path)
+	mux.HandleFunc("GET /repos/{owner}/{repo}/git/blobs/{sha}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
 		if r == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
-		s := strings.Split(req.URL.Path, "/")
-		sha := s[len(s)-1]
+		sha := req.PathValue("sha")
 		for _, c := range r.commits {
 			for _, v := range c.files {
 				if v.sha == sha {
-					return httpmock.NewBytesResponse(http.StatusOK, v.Body), nil
+					w.Write(v.Body)
+					return
 				}
 			}
 		}
-		return newNotFoundResponse(req)
+		if err := notFoundResponse(w); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+		}
+		return
 	})
 	// Get ref
 	// GET /repos/octocat/example/git/ref/tags/{sha}
-	tr.RegisterRegexpResponder(http.MethodGet, regexp.MustCompile(`/repos/[^/?]+/[^/?]+/git/ref/[^?]+$`), func(req *http.Request) (*http.Response, error) {
-		r := m.findRepository(req.URL.Path)
+	mux.HandleFunc("GET /repos/{owner}/{repo}/git/ref/tags/{sha}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
 		if r == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 		s := strings.Split(req.URL.Path, "/")
 		ref := plumbing.ReferenceName("refs/" + strings.Join(s[6:], "/"))
@@ -434,32 +514,43 @@ func (m *Mock) registerGitService(tr *httpmock.MockTransport) {
 							Type: new("commit"),
 						},
 					}
-					return newMockJSONResponse(req, http.StatusOK, reference)
+					if err := jsonResponse(w, http.StatusOK, reference); err != nil {
+						m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+					}
+					return
 				}
 			}
 		}
-		return newNotFoundResponse(req)
+		if err := notFoundResponse(w); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+		}
+		return
 	})
 }
 
-func (m *Mock) registerRepositoriesService(tr *httpmock.MockTransport) {
+func (m *Mock) registerRepositoriesService(mux *http.ServeMux) {
 	// Get commit
 	// Get /repos/octocat/example/commits/{sha}
-	tr.RegisterRegexpResponder(http.MethodGet, regexp.MustCompile(`/repos/[^/?]+/[^/?]+/commits/[^/?]+$`), func(req *http.Request) (*http.Response, error) {
-		r := m.findRepository(req.URL.Path)
+	mux.HandleFunc("GET /repos/{owner}/{repo}/commits/{sha}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
 		if r == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
-		s := strings.Split(req.URL.Path, "/")
-		sha := s[len(s)-1]
+		sha := req.PathValue("sha")
 		if sha == "HEAD" { // Special case
 			if r.headCommit == nil {
-				return newNotFoundResponse(req)
+				if err := notFoundResponse(w); err != nil {
+
+				}
+				return
 			}
-			return newMockJSONResponse(req, http.StatusOK, &github.RepositoryCommit{
-				SHA:    r.headCommit.ghCommit.SHA,
-				Commit: r.headCommit.ghCommit,
-			})
+			if err := jsonResponse(w, http.StatusOK, &github.RepositoryCommit{SHA: r.headCommit.ghCommit.SHA, Commit: r.headCommit.ghCommit}); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 		for _, c := range r.commits {
 			if c.ghCommit.GetSHA() == sha {
@@ -467,29 +558,43 @@ func (m *Mock) registerRepositoriesService(tr *httpmock.MockTransport) {
 					SHA:    c.ghCommit.SHA,
 					Commit: c.ghCommit,
 				}
-				return newMockJSONResponse(req, http.StatusOK, commit)
+				if err := jsonResponse(w, http.StatusOK, commit); err != nil {
+					m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+				}
+				return
 			}
 		}
-		return newNotFoundResponse(req)
+		if err := notFoundResponse(w); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+		}
+		return
 	})
 	// Create commit status
 	// POST /repos/octocat/example/statuses/{sha}
-	tr.RegisterRegexpResponder(http.MethodPost, regexp.MustCompile(`/repos/[^/?]+/[^/?]+/statuses/[^/?]+$`), func(req *http.Request) (*http.Response, error) {
-		r := m.findRepository(req.URL.Path)
+	mux.HandleFunc("POST /repos/{owner}/{repo}/statuses/{sha}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
 		if r == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 		var status github.RepoStatus
 		if err := json.NewDecoder(req.Body).Decode(&status); err != nil {
-			return newErrResponse(req, http.StatusBadRequest, err.Error())
+			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 
-		s := strings.Split(req.URL.Path, "/")
-		sha := s[len(s)-1]
+		sha := req.PathValue("sha")
 		var commit *Commit
 		if sha == "HEAD" {
 			if r.headCommit == nil {
-				return newNotFoundResponse(req)
+				if err := notFoundResponse(w); err != nil {
+					m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+				}
+				return
 			}
 			commit = r.headCommit
 		} else {
@@ -501,25 +606,37 @@ func (m *Mock) registerRepositoriesService(tr *httpmock.MockTransport) {
 			}
 		}
 		if commit == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 		commit.ghStatuses = append(commit.ghStatuses, &status)
-		return newMockJSONResponse(req, http.StatusOK, status)
+		if err := jsonResponse(w, http.StatusOK, status); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+		}
+		return
 	})
 }
 
-func (m *Mock) registerIssuesService(tr *httpmock.MockTransport) {
+func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 	// Create issue
 	// Post /repos/octocat/example/issues
-	tr.RegisterRegexpResponder(http.MethodPost, regexp.MustCompile(`/repos/[^/?]+/[^/?]+/issues$`), func(req *http.Request) (*http.Response, error) {
-		r := m.findRepository(req.URL.Path)
+	mux.HandleFunc("POST /repos/{owner}/{repo}/issues", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
 		if r == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 
 		var reqIssue github.IssueRequest
 		if err := json.NewDecoder(req.Body).Decode(&reqIssue); err != nil {
-			return newErrResponse(req, http.StatusBadRequest, err.Error())
+			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 
 		issue := &github.Issue{
@@ -528,54 +645,74 @@ func (m *Mock) registerIssuesService(tr *httpmock.MockTransport) {
 			Body:   reqIssue.Body,
 		}
 		r.Issues(&Issue{ghIssue: issue})
-		return newMockJSONResponse(req, http.StatusOK, issue)
+		if err := jsonResponse(w, http.StatusOK, issue); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode issue response", slog.Any("err", err))
+		}
+		return
 	})
 	// Create a new comment
 	// POST /repos/octocat/example/issues/1/comments
-	tr.RegisterRegexpResponder(http.MethodPost, regexp.MustCompile(`/repos/[^/?]+/[^/?]+/issues/\d+/comments`), func(req *http.Request) (*http.Response, error) {
-		r := m.findRepository(req.URL.Path)
+	mux.HandleFunc("POST /repos/{owner}/{repo}/issues/{number}/comments", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
 		if r == nil {
-			return newNotFoundResponse(req)
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
-		s := strings.Split(req.URL.Path, "/")
-		num, err := strconv.Atoi(s[5])
+		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
-			return newErrResponse(req, http.StatusBadRequest, err.Error())
+			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
 		}
 
 		issue := r.GetIssue(num)
 		if issue != nil {
 			var comment github.IssueComment
 			if err := json.NewDecoder(req.Body).Decode(&comment); err != nil {
-				return newErrResponse(req, http.StatusBadRequest, err.Error())
+				if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
+					m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+				}
+				return
 			}
 
 			issue.comments = append(issue.comments, &comment)
-			return newMockJSONResponse(req, http.StatusOK, comment)
+			if err := jsonResponse(w, http.StatusOK, comment); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode issue response", slog.Any("err", err))
+			}
+			return
 		}
 
 		pr := r.GetPullRequest(num)
 		if pr != nil {
 			var comment github.IssueComment
 			if err := json.NewDecoder(req.Body).Decode(&comment); err != nil {
-				return newErrResponse(req, http.StatusBadRequest, err.Error())
+				if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
+					m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+				}
+				return
 			}
 
 			pr.comments = append(pr.comments, &github.PullRequestComment{
 				Body: comment.Body,
 			})
-			return newMockJSONResponse(req, http.StatusOK, comment)
+			if err := jsonResponse(w, http.StatusOK, comment); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode issue response", slog.Any("err", err))
+			}
+			return
 		}
 
-		return newNotFoundResponse(req)
+		if err := notFoundResponse(w); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+		}
+		return
 	})
 }
 
-func (m *Mock) findRepository(p string) *Repository {
-	s := strings.Split(p, "/")
-	name := fmt.Sprintf("%s/%s", s[2], s[3])
-
-	if r, ok := m.repositories[name]; ok {
+func (m *Mock) findRepository(req *http.Request) *Repository {
+	if r, ok := m.repositories[fmt.Sprintf("%s/%s", req.PathValue("owner"), req.PathValue("repo"))]; ok {
 		return r
 	}
 	return nil
@@ -604,26 +741,28 @@ func (r *Repository) nextIndex() int {
 	return lastIndex + 1
 }
 
-func newNotFoundResponse(req *http.Request) (*http.Response, error) {
-	return newErrResponse(req, http.StatusNotFound, "Not found")
+func notFoundResponse(w http.ResponseWriter) error {
+	return errResponse(w, http.StatusNotFound, "Not found")
 }
 
-func newErrResponse(req *http.Request, status int, message string) (*http.Response, error) {
-	res, err := httpmock.NewJsonResponse(status, &struct {
-		Message string `json:"message"`
-	}{Message: message})
-	if res != nil {
-		res.Request = req
-	}
-	return res, err
+type errorResponse struct {
+	Message string `json:"message"`
 }
 
-func newMockJSONResponse(req *http.Request, status int, body any) (*http.Response, error) {
-	res, err := httpmock.NewJsonResponse(status, body)
-	if res != nil {
-		res.Request = req
+func errResponse(w http.ResponseWriter, status int, message string) error {
+	if err := jsonResponse(w, status, &errorResponse{Message: message}); err != nil {
+		return err
 	}
-	return res, err
+	return nil
+}
+
+func jsonResponse(w http.ResponseWriter, status int, data any) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		return err
+	}
+	return nil
 }
 
 func newHash() string {
@@ -634,4 +773,14 @@ func newHash() string {
 	h := sha256.New()
 	hash := h.Sum(buf)
 	return hex.EncodeToString(hash)
+}
+
+type transport struct {
+	handler http.Handler
+}
+
+func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	recoder := httptest.NewRecorder()
+	t.handler.ServeHTTP(recoder, req)
+	return recoder.Result(), nil
 }

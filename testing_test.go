@@ -22,7 +22,7 @@ func TestMock(t *testing.T) {
 					Base("master").
 					Head(nil, "feature-1"),
 			)
-			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
+			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 
 			pr, _, err := ghClient.PullRequests.Get(t.Context(), "f110", "gh-test", 1)
 			require.NoError(t, err)
@@ -32,7 +32,7 @@ func TestMock(t *testing.T) {
 		t.Run("Create", func(t *testing.T) {
 			m := NewMock()
 			m.Repository("f110/gh-test")
-			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
+			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 
 			pr, _, err := ghClient.PullRequests.Create(t.Context(), "f110", "gh-test", &github.NewPullRequest{})
 			require.NoError(t, err)
@@ -42,7 +42,7 @@ func TestMock(t *testing.T) {
 		t.Run("Edit", func(t *testing.T) {
 			m := NewMock()
 			repo := m.Repository("f110/gh-test")
-			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
+			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 			repo.PullRequests(
 				NewPullRequest().
 					Number(1).
@@ -63,7 +63,7 @@ func TestMock(t *testing.T) {
 		t.Run("CreateComment", func(t *testing.T) {
 			m := NewMock()
 			repo := m.Repository("f110/gh-test")
-			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
+			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 			repo.PullRequests(
 				NewPullRequest().
 					Number(1).
@@ -97,7 +97,7 @@ func TestMock(t *testing.T) {
 		require.NoError(t, err)
 		repo.Tags(NewTag().Name("v1.0.0").Commit(commit))
 
-		ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
+		ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 
 		t.Run("GetCommit", func(t *testing.T) {
 			commit, _, err := ghClient.Git.GetCommit(t.Context(), "f110", "gh-test", "HEAD")
@@ -170,7 +170,7 @@ func TestMock(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
+		ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 
 		t.Run("GetCommit", func(t *testing.T) {
 			repoCommit, _, err := ghClient.Repositories.GetCommit(t.Context(), "f110", "gh-test", "HEAD", &github.ListOptions{})
@@ -190,7 +190,7 @@ func TestMock(t *testing.T) {
 		t.Run("Create", func(t *testing.T) {
 			m := NewMock()
 			m.Repository("f110/gh-test")
-			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
+			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 
 			pr, _, err := ghClient.Issues.Create(t.Context(), "f110", "gh-test", &github.IssueRequest{})
 			require.NoError(t, err)
@@ -200,7 +200,7 @@ func TestMock(t *testing.T) {
 		t.Run("CreateComment", func(t *testing.T) {
 			m := NewMock()
 			repo := m.Repository("f110/gh-test")
-			ghClient := github.NewClient(&http.Client{Transport: m.RegisteredTransport()})
+			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 			repo.Issues(
 				NewIssue().
 					Number(1).

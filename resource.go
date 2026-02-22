@@ -20,6 +20,9 @@ func NewCommit() *Commit {
 }
 
 func (c *Commit) SHA(v string) *Commit {
+	if v == "" {
+		return c
+	}
 	c.ghCommit.SHA = new(v)
 	return c
 }
@@ -112,26 +115,41 @@ func NewPullRequest() *PullRequest {
 }
 
 func (pr *PullRequest) Number(v int) *PullRequest {
+	if v <= 0 {
+		return pr
+	}
 	pr.ghPullRequest.Number = new(v)
 	return pr
 }
 
 func (pr *PullRequest) Title(v string) *PullRequest {
+	if v == "" {
+		return pr
+	}
 	pr.ghPullRequest.Title = new(v)
 	return pr
 }
 
 func (pr *PullRequest) Body(v string) *PullRequest {
+	if v == "" {
+		return pr
+	}
 	pr.ghPullRequest.Body = new(v)
 	return pr
 }
 
 func (pr *PullRequest) Base(ref string) *PullRequest {
+	if ref == "" {
+		return pr
+	}
 	pr.ghPullRequest.Base = &github.PullRequestBranch{Ref: new(ref)}
 	return pr
 }
 
 func (pr *PullRequest) Head(repo *Repository, ref string) *PullRequest {
+	if repo == nil || ref == "" {
+		return pr
+	}
 	pr.headRepo = repo
 	pr.ghPullRequest.Head = &github.PullRequestBranch{Ref: new(ref)}
 	return pr
@@ -157,11 +175,17 @@ func NewIssue() *Issue {
 }
 
 func (i *Issue) Number(v int) *Issue {
+	if v <= 0 {
+		return i
+	}
 	i.ghIssue.Number = new(v)
 	return i
 }
 
 func (i *Issue) Title(v string) *Issue {
+	if v == "" {
+		return i
+	}
 	i.ghIssue.Title = new(v)
 	return i
 }
@@ -186,11 +210,17 @@ func NewTag() *Tag {
 }
 
 func (t *Tag) Name(v string) *Tag {
+	if v == "" {
+		return t
+	}
 	t.ghTag.Tag = new(v)
 	return t
 }
 
 func (t *Tag) Commit(c *Commit) *Tag {
+	if c == nil {
+		return t
+	}
 	t.commit = c
 	t.ghTag.SHA = c.ghCommit.SHA
 	return t

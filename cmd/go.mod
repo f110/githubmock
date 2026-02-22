@@ -1,17 +1,21 @@
-module go.f110.dev/githubmock
+module go.f110.dev/githubmock/cmd
 
 go 1.26.0
 
+replace go.f110.dev/githubmock => ../
+
 require (
-	github.com/go-git/go-git/v5 v5.16.5
-	github.com/google/go-github/v83 v83.0.0
-	github.com/stretchr/testify v1.11.1
+	go.f110.dev/githubmock v0.0.0-00010101000000-000000000000
+	go.yaml.in/yaml/v4 v4.0.0-rc.4
 )
 
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/go-git/go-git/v5 v5.16.5 // indirect
+	github.com/google/go-github/v83 v83.0.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/pjbgf/sha1cd v0.3.2 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
+	github.com/stretchr/testify v1.11.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

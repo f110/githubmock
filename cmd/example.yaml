@@ -1,0 +1,8 @@
+name: octocat/example
+pull_requests:
+  - number: 1
+    title: Fix
+    body: Please review the changes and merge if everything looks good.
+issues:
+  - number: 2
+    title: Bug
