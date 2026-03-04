@@ -196,6 +196,9 @@ func (m *Mock) registerMultiplexer(mux *http.ServeMux) {
 	m.registerIssuesService(mux)
 	m.registerRepositoriesService(mux)
 	m.registerGitService(mux)
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotImplemented)
+	})
 }
 
 func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
