@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"go.f110.dev/githubmock"
 	"go.f110.dev/githubmock/cmd/githubmock-server/internal/config"
@@ -33,7 +34,7 @@ func main() {
 	mock.RegisterHandler(mux)
 	svr := &http.Server{
 		Addr:    *listen,
-		Handler: mux,
+		Handler: accessLogWrapper(mux),
 	}
 	fmt.Printf("Listening on %s\n", *listen)
 	if err := svr.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -122,4 +123,28 @@ func newMock(repos []*config.Repository) (*githubmock.Mock, error) {
 		}
 	}
 	return mock, nil
+}
+
+func accessLogWrapper(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		t1 := time.Now()
+		rr := &responseRecoder{ResponseWriter: w}
+		h.ServeHTTP(rr, req)
+		code := rr.code
+		if code == 0 {
+			code = 200
+		}
+		fmt.Fprintf(os.Stdout, "%s - [%s] \"%s %s %s\" %d\n", req.RemoteAddr, t1.Format("02/Jan/2006:15:04:05 -0700"), req.Method, req.URL.Path, req.Proto, code)
+	})
+}
+
+type responseRecoder struct {
+	http.ResponseWriter
+
+	code int
+}
+
+func (rr *responseRecoder) WriteHeader(code int) {
+	rr.code = code
+	rr.ResponseWriter.WriteHeader(code)
 }
