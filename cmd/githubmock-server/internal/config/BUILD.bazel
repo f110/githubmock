@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "config",
+    srcs = ["object.go"],
+    importpath = "go.f110.dev/githubmock/cmd/githubmock-server/internal/config",
+    visibility = ["//cmd/githubmock-server:__subpackages__"],
+    deps = [
+        "//:githubmock",
+        "@in_yaml_go_yaml_v4//:go_default_library",
+    ],
+)

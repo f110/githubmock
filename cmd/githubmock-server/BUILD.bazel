@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "githubmock-server_lib",
+    srcs = ["main.go"],
+    importpath = "go.f110.dev/githubmock/cmd/githubmock-server",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//:githubmock",
+        "//cmd/githubmock-server/internal/config",
+    ],
+)
+
+go_binary(
+    name = "githubmock-server",
+    embed = [":githubmock-server_lib"],
+    visibility = ["//visibility:public"],
+)
