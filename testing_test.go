@@ -27,6 +27,9 @@ func TestMock(t *testing.T) {
 			pr, _, err := ghClient.PullRequests.Get(t.Context(), "f110", "gh-test", 1)
 			require.NoError(t, err)
 			assert.Equal(t, 1, pr.GetNumber())
+			require.NotNil(t, pr.Base)
+			require.NotNil(t, pr.Base.Repo)
+			assert.Equal(t, "f110/gh-test", pr.Base.Repo.GetFullName())
 		})
 
 		t.Run("List", func(t *testing.T) {
@@ -211,6 +214,13 @@ func TestMock(t *testing.T) {
 
 		ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 
+		t.Run("Get", func(t *testing.T) {
+			r, _, err := ghClient.Repositories.Get(t.Context(), "f110", "gh-test")
+			require.NoError(t, err)
+			assert.Equal(t, "gh-test", r.GetName())
+			assert.Equal(t, "f110/gh-test", r.GetFullName())
+		})
+
 		t.Run("GetCommit", func(t *testing.T) {
 			repoCommit, _, err := ghClient.Repositories.GetCommit(t.Context(), "f110", "gh-test", "HEAD", &github.ListOptions{})
 			require.NoError(t, err)
@@ -226,56 +236,36 @@ func TestMock(t *testing.T) {
 	})
 
 	t.Run("IssueService", func(t *testing.T) {
-		t.Run("Get", func(t *testing.T) {
-			m := NewMock()
-			repo := m.Repository("f110/gh-test")
-			repo.Issues(
-				NewIssue().
-					Number(1).
-					Title(t.Name()),
-			)
-			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
+		m := NewMock()
+		repo := m.Repository("f110/gh-test")
+		repo.Issues(
+			NewIssue().
+				Number(1).
+				Title(t.Name()),
+		)
 
+		ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
+
+		t.Run("Get", func(t *testing.T) {
 			issue, _, err := ghClient.Issues.Get(t.Context(), "f110", "gh-test", 1)
 			require.NoError(t, err)
 			assert.Equal(t, 1, issue.GetNumber())
+			require.NotNil(t, issue.Repository)
 		})
 
 		t.Run("ListByRepo", func(t *testing.T) {
-			m := NewMock()
-			repo := m.Repository("f110/gh-test")
-			repo.Issues(
-				NewIssue().
-					Number(1).
-					Title(t.Name()),
-			)
-			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
-
 			issues, _, err := ghClient.Issues.ListByRepo(t.Context(), "f110", "gh-test", nil)
 			require.NoError(t, err)
 			assert.Len(t, issues, 1)
 		})
 
 		t.Run("Create", func(t *testing.T) {
-			m := NewMock()
-			m.Repository("f110/gh-test")
-			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
-
 			pr, _, err := ghClient.Issues.Create(t.Context(), "f110", "gh-test", &github.IssueRequest{})
 			require.NoError(t, err)
 			assert.Equal(t, 1, pr.GetNumber())
 		})
 
 		t.Run("CreateComment", func(t *testing.T) {
-			m := NewMock()
-			repo := m.Repository("f110/gh-test")
-			repo.Issues(
-				NewIssue().
-					Number(1).
-					Title(t.Name()),
-			)
-			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
-
 			comment, _, err := ghClient.Issues.CreateComment(t.Context(), "f110", "gh-test", 1, &github.IssueComment{
 				Body: new("Comment"),
 			})

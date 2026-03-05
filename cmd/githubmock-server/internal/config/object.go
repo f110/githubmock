@@ -92,16 +92,27 @@ func Load(definitionFiles ...string) ([]*Repository, error) {
 		}
 
 		decoder := yaml.NewDecoder(f)
+		var node yaml.Node
 		for {
-			repo := &Repository{}
-			err := decoder.Decode(repo)
+			err := decoder.Decode(&node)
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			if err != nil {
+			var k struct {
+				Kind string `yaml:"kind"`
+			}
+			if err := node.Decode(&k); err != nil {
 				return nil, err
 			}
-			repos = append(repos, repo)
+
+			switch k.Kind {
+			default:
+				repo := &Repository{}
+				if err != nil {
+					return nil, err
+				}
+				repos = append(repos, repo)
+			}
 		}
 	}
 	return repos, nil

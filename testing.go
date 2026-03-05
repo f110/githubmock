@@ -36,10 +36,12 @@ type Repository struct {
 
 	headCommit *Commit
 	rootCommit *Commit
+
+	ghRepository *github.Repository
 }
 
 func newRepository() *Repository {
-	return &Repository{}
+	return &Repository{ghRepository: &github.Repository{}}
 }
 
 func NewMock() *Mock {
@@ -47,6 +49,10 @@ func NewMock() *Mock {
 }
 
 func (m *Mock) Repository(name string) *Repository {
+	if strings.Count(name, "/") != 1 {
+		return nil
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -55,6 +61,8 @@ func (m *Mock) Repository(name string) *Repository {
 	}
 
 	r := newRepository()
+	r.ghRepository.Name = new(name[strings.Index(name, "/")+1:])
+	r.ghRepository.FullName = new(name)
 	m.repositories[name] = r
 	return r
 }
@@ -90,6 +98,10 @@ func (r *Repository) PullRequests(pullRequests ...*PullRequest) {
 		if v.ghPullRequest.GetNumber() == 0 {
 			v.ghPullRequest.Number = new(r.nextIndex())
 		}
+		if v.ghPullRequest.Base == nil {
+			v.ghPullRequest.Base = &github.PullRequestBranch{}
+		}
+		v.ghPullRequest.Base.Repo = r.ghRepository
 	}
 }
 
@@ -119,6 +131,7 @@ func (r *Repository) Issues(issues ...*Issue) {
 		if v.ghIssue.GetNumber() == 0 {
 			v.ghIssue.Number = new(r.nextIndex())
 		}
+		v.ghIssue.Repository = r.ghRepository
 	}
 }
 
@@ -586,8 +599,22 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 }
 
 func (m *Mock) registerRepositoriesService(mux *http.ServeMux) {
+	// Get a repository
+	// GET /repos/{owner}/{repo}
+	mux.HandleFunc("GET /repos/{owner}/{repo}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
+		}
+		if err := jsonResponse(w, http.StatusOK, r.ghRepository); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+		}
+	})
 	// Get commit
-	// Get /repos/octocat/example/commits/{sha}
+	// GET /repos/octocat/example/commits/{sha}
 	mux.HandleFunc("GET /repos/{owner}/{repo}/commits/{sha}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
