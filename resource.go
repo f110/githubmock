@@ -103,6 +103,13 @@ type CommitStatus struct {
 	Description string
 }
 
+type PullRequestState string
+
+const (
+	PullRequestStateOpen   PullRequestState = "open"
+	PullRequestStateClosed PullRequestState = "closed"
+)
+
 type PullRequest struct {
 	ghPullRequest *github.PullRequest
 	headRepo      *Repository
@@ -138,6 +145,22 @@ func (pr *PullRequest) Body(v string) *PullRequest {
 	return pr
 }
 
+func (pr *PullRequest) Author(v string) *PullRequest {
+	if v == "" {
+		return pr
+	}
+	pr.ghPullRequest.User = &github.User{Login: new(v)}
+	return pr
+}
+
+func (pr *PullRequest) State(v PullRequestState) *PullRequest {
+	if v == "" {
+		return pr
+	}
+	pr.ghPullRequest.State = new(string(v))
+	return pr
+}
+
 func (pr *PullRequest) Base(ref string) *PullRequest {
 	if ref == "" {
 		return pr
@@ -155,7 +178,7 @@ func (pr *PullRequest) Head(repo *Repository, ref string) *PullRequest {
 	return pr
 }
 
-func (pr *PullRequest) Comments(comments []*Comment) *PullRequest {
+func (pr *PullRequest) Comments(comments ...*Comment) *PullRequest {
 	for _, v := range comments {
 		pr.comments = append(pr.comments, &github.PullRequestComment{
 			User: &github.User{Login: new(v.Author)},
@@ -164,6 +187,20 @@ func (pr *PullRequest) Comments(comments []*Comment) *PullRequest {
 	}
 	return pr
 }
+
+func (pr *PullRequest) Reviews(reviews ...*Review) *PullRequest {
+	for _, v := range reviews {
+		pr.reviews = append(pr.reviews, v.ghReview)
+	}
+	return pr
+}
+
+type IssueState string
+
+const (
+	IssueStateOpen   IssueState = "open"
+	IssueStateClosed IssueState = "closed"
+)
 
 type Issue struct {
 	ghIssue  *github.Issue
@@ -187,6 +224,22 @@ func (i *Issue) Title(v string) *Issue {
 		return i
 	}
 	i.ghIssue.Title = new(v)
+	return i
+}
+
+func (i *Issue) Author(v string) *Issue {
+	if v == "" {
+		return i
+	}
+	i.ghIssue.User = &github.User{Login: new(v)}
+	return i
+}
+
+func (i *Issue) State(v IssueState) *Issue {
+	if v == "" {
+		return i
+	}
+	i.ghIssue.State = new(string(v))
 	return i
 }
 
@@ -234,4 +287,44 @@ func (t *Tag) toGithubTag() *github.Tag {
 type Comment struct {
 	Author string
 	Body   string
+}
+
+type ReviewState string
+
+const (
+	ReviewStateChangesRequested ReviewState = "CHANGES_REQUESTED"
+	ReviewStateCommented        ReviewState = "COMMENTED"
+	ReviewStateApproved         ReviewState = "APPROVED"
+)
+
+type Review struct {
+	ghReview *github.PullRequestReview
+}
+
+func NewReview() *Review {
+	return &Review{ghReview: &github.PullRequestReview{}}
+}
+
+func (r *Review) Body(v string) *Review {
+	if v == "" {
+		return r
+	}
+	r.ghReview.Body = new(v)
+	return r
+}
+
+func (r *Review) Author(v string) *Review {
+	if v == "" {
+		return r
+	}
+	r.ghReview.User = &github.User{Login: new(v)}
+	return r
+}
+
+func (r *Review) State(v ReviewState) *Review {
+	if v == "" {
+		return r
+	}
+	r.ghReview.State = new(string(v))
+	return r
 }

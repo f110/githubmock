@@ -10,6 +10,13 @@ import (
 	"go.f110.dev/githubmock"
 )
 
+type (
+	PullRequestState = githubmock.PullRequestState
+	IssueState       = githubmock.IssueState
+	ReviewState      = githubmock.ReviewState
+	CommitState      = githubmock.CommitState
+)
+
 type Repository struct {
 	Name         string         `yaml:"name"`
 	PullRequests []*PullRequest `yaml:"pull_requests,omitempty"`
@@ -19,12 +26,15 @@ type Repository struct {
 }
 
 type PullRequest struct {
-	Number   int        `yaml:"number,omitempty"`
-	Title    string     `yaml:"title,omitempty"`
-	Body     string     `yaml:"body,omitempty"`
-	Base     string     `yaml:"base,omitempty"`
-	Head     *Head      `yaml:"head,omitempty"`
-	Comments []*Comment `yaml:"comments,omitempty"`
+	Number   int              `yaml:"number,omitempty"`
+	Title    string           `yaml:"title,omitempty"`
+	Author   string           `yaml:"author,omitempty"`
+	Body     string           `yaml:"body,omitempty"`
+	Base     string           `yaml:"base,omitempty"`
+	Head     *Head            `yaml:"head,omitempty"`
+	State    PullRequestState `yaml:"state,omitempty"`
+	Comments []*Comment       `yaml:"comments,omitempty"`
+	Reviews  []*Review        `yaml:"reviews,omitempty"`
 }
 
 type Head struct {
@@ -40,6 +50,8 @@ type Comment struct {
 type Issue struct {
 	Number   int        `yaml:"number,omitempty"`
 	Title    string     `yaml:"title,omitempty"`
+	Author   string     `yaml:"author,omitempty"`
+	State    IssueState `yaml:"state,omitempty"`
 	Comments []*Comment `yaml:"comments,omitempty"`
 }
 
@@ -56,13 +68,19 @@ type Commit struct {
 }
 
 type CommitStatus struct {
-	State       githubmock.CommitState `yaml:"state"`
-	Description string                 `yaml:"description,omitempty"`
+	State       CommitState `yaml:"state"`
+	Description string      `yaml:"description,omitempty"`
 }
 
 type File struct {
 	Name    string `yaml:"name"`
 	Content string `yaml:"content"`
+}
+
+type Review struct {
+	State  ReviewState `yaml:"state"`
+	Author string      `yaml:"author,omitempty"`
+	Body   string      `yaml:"body,omitempty"`
 }
 
 func Load(definitionFiles ...string) ([]*Repository, error) {

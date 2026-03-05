@@ -60,7 +60,6 @@ func TestMock(t *testing.T) {
 		t.Run("Edit", func(t *testing.T) {
 			m := NewMock()
 			repo := m.Repository("f110/gh-test")
-			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 			repo.PullRequests(
 				NewPullRequest().
 					Number(1).
@@ -69,6 +68,7 @@ func TestMock(t *testing.T) {
 					Base("master").
 					Head(nil, "feature-1"),
 			)
+			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 
 			pr, _, err := ghClient.PullRequests.Edit(t.Context(), "f110", "gh-test", 1, &github.PullRequest{
 				Base: &github.PullRequestBranch{Ref: new("main")},
@@ -81,12 +81,12 @@ func TestMock(t *testing.T) {
 		t.Run("CreateComment", func(t *testing.T) {
 			m := NewMock()
 			repo := m.Repository("f110/gh-test")
-			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 			repo.PullRequests(
 				NewPullRequest().
 					Number(1).
 					Title(t.Name()),
 			)
+			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 
 			comment, _, err := ghClient.PullRequests.CreateComment(t.Context(), "f110", "gh-test", 1, &github.PullRequestComment{
 				Body: new("Comment"),
@@ -96,6 +96,27 @@ func TestMock(t *testing.T) {
 			pr := repo.GetPullRequest(1)
 			require.NotNil(t, pr)
 			assert.Len(t, pr.comments, 1)
+		})
+
+		t.Run("ListReviews", func(t *testing.T) {
+			m := NewMock()
+			repo := m.Repository("f110/gh-test")
+			repo.PullRequests(
+				NewPullRequest().
+					Number(1).
+					Title(t.Name()).
+					Reviews(
+						NewReview().
+							Author("user1").
+							Body("LGTM").
+							State(ReviewStateApproved),
+					),
+			)
+			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
+
+			reviews, _, err := ghClient.PullRequests.ListReviews(t.Context(), "f110", "gh-test", 1, nil)
+			require.NoError(t, err)
+			assert.Len(t, reviews, 1)
 		})
 	})
 
@@ -248,12 +269,12 @@ func TestMock(t *testing.T) {
 		t.Run("CreateComment", func(t *testing.T) {
 			m := NewMock()
 			repo := m.Repository("f110/gh-test")
-			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 			repo.Issues(
 				NewIssue().
 					Number(1).
 					Title(t.Name()),
 			)
+			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 
 			comment, _, err := ghClient.Issues.CreateComment(t.Context(), "f110", "gh-test", 1, &github.IssueComment{
 				Body: new("Comment"),

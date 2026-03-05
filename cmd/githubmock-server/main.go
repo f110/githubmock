@@ -58,12 +58,19 @@ func newMock(repos []*config.Repository) (*githubmock.Mock, error) {
 			for _, c := range pr.Comments {
 				comments = append(comments, &githubmock.Comment{Author: c.Author, Body: c.Body})
 			}
+			reviews := make([]*githubmock.Review, 0, len(pr.Reviews))
+			for _, r := range pr.Reviews {
+				reviews = append(reviews, githubmock.NewReview().Author(r.Author).State(r.State).Body(r.Body))
+			}
 			b := githubmock.NewPullRequest().
 				Number(pr.Number).
 				Title(pr.Title).
+				State(pr.State).
+				Author(pr.Author).
 				Body(pr.Body).
 				Base(pr.Base).
-				Comments(comments)
+				Comments(comments...).
+				Reviews(reviews...)
 			if pr.Head != nil {
 				b.Head(m[pr.Head.Repo], pr.Head.Ref)
 			}
@@ -78,6 +85,8 @@ func newMock(repos []*config.Repository) (*githubmock.Mock, error) {
 			b := githubmock.NewIssue().
 				Number(issue.Number).
 				Title(issue.Title).
+				Author(issue.Author).
+				State(issue.State).
 				Comments(comments)
 			repo.Issues(b)
 		}

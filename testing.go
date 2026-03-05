@@ -389,6 +389,28 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 		}
 		return
 	})
+	// List reviews
+	// GET /repos/octocat/example/pulls/1/reviews
+	mux.HandleFunc("GET /repos/{owner}/{repo}/pulls/{number}/reviews", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
+		}
+		num, err := strconv.Atoi(req.PathValue("number"))
+		if err != nil {
+			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
+		}
+		pr := r.GetPullRequest(num)
+		if err := jsonResponse(w, http.StatusOK, pr.reviews); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode pull request response", slog.Any("err", err))
+		}
+	})
 }
 
 func (m *Mock) registerGitService(mux *http.ServeMux) {
