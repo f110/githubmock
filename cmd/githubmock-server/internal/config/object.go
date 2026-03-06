@@ -111,6 +111,9 @@ func Load(definitionFiles ...string) ([]*Repository, error) {
 				if err != nil {
 					return nil, err
 				}
+				if err := node.Decode(repo); err != nil {
+					return nil, err
+				}
 				repos = append(repos, repo)
 			}
 		}
