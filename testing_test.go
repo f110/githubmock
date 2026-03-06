@@ -3,6 +3,7 @@ package githubmock
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/go-github/v83/github"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +21,9 @@ func TestMock(t *testing.T) {
 					Title(t.Name()).
 					Body("PR description").
 					Base("master").
-					Head(nil, "feature-1"),
+					Head(nil, "feature-1").
+					CreatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)).
+					UpdatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)),
 			)
 			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 
@@ -30,6 +33,8 @@ func TestMock(t *testing.T) {
 			require.NotNil(t, pr.Base)
 			require.NotNil(t, pr.Base.Repo)
 			assert.Equal(t, "f110/gh-test", pr.Base.Repo.GetFullName())
+			assert.Equal(t, "2022-01-01T01:01:01Z", pr.GetCreatedAt().Format(time.RFC3339))
+			assert.Equal(t, "2022-01-01T01:01:01Z", pr.GetUpdatedAt().Format(time.RFC3339))
 		})
 
 		t.Run("List", func(t *testing.T) {
@@ -241,7 +246,9 @@ func TestMock(t *testing.T) {
 		repo.Issues(
 			NewIssue().
 				Number(1).
-				Title(t.Name()),
+				Title(t.Name()).
+				CreatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)).
+				UpdatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)),
 		)
 
 		ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
@@ -251,6 +258,8 @@ func TestMock(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, 1, issue.GetNumber())
 			require.NotNil(t, issue.Repository)
+			assert.Equal(t, "2022-01-01T01:01:01Z", issue.GetCreatedAt().Format(time.RFC3339))
+			assert.Equal(t, "2022-01-01T01:01:01Z", issue.GetUpdatedAt().Format(time.RFC3339))
 		})
 
 		t.Run("ListByRepo", func(t *testing.T) {

@@ -70,7 +70,9 @@ func newMock(repos []*config.Repository) (*githubmock.Mock, error) {
 				Body(pr.Body).
 				Base(pr.Base).
 				Comments(comments...).
-				Reviews(reviews...)
+				Reviews(reviews...).
+				CreatedAt(pr.CreatedAt).
+				UpdatedAt(pr.UpdatedAt)
 			if pr.Head != nil {
 				b.Head(m[pr.Head.Repo], pr.Head.Ref)
 			}
@@ -87,7 +89,9 @@ func newMock(repos []*config.Repository) (*githubmock.Mock, error) {
 				Title(issue.Title).
 				Author(issue.Author).
 				State(issue.State).
-				Comments(comments)
+				Comments(comments).
+				CreatedAt(issue.CreatedAt).
+				UpdatedAt(issue.UpdatedAt)
 			repo.Issues(b)
 		}
 

@@ -1,6 +1,8 @@
 package githubmock
 
 import (
+	"time"
+
 	"github.com/google/go-github/v83/github"
 )
 
@@ -195,6 +197,22 @@ func (pr *PullRequest) Reviews(reviews ...*Review) *PullRequest {
 	return pr
 }
 
+func (pr *PullRequest) CreatedAt(t time.Time) *PullRequest {
+	if t.IsZero() {
+		return pr
+	}
+	pr.ghPullRequest.CreatedAt = &github.Timestamp{Time: t}
+	return pr
+}
+
+func (pr *PullRequest) UpdatedAt(t time.Time) *PullRequest {
+	if t.IsZero() {
+		return pr
+	}
+	pr.ghPullRequest.UpdatedAt = &github.Timestamp{Time: t}
+	return pr
+}
+
 type IssueState string
 
 const (
@@ -250,6 +268,22 @@ func (i *Issue) Comments(comments []*Comment) *Issue {
 			Body: new(v.Body),
 		})
 	}
+	return i
+}
+
+func (i *Issue) CreatedAt(t time.Time) *Issue {
+	if t.IsZero() {
+		return i
+	}
+	i.ghIssue.CreatedAt = &github.Timestamp{Time: t}
+	return i
+}
+
+func (i *Issue) UpdatedAt(t time.Time) *Issue {
+	if t.IsZero() {
+		return i
+	}
+	i.ghIssue.UpdatedAt = &github.Timestamp{Time: t}
 	return i
 }
 
@@ -326,5 +360,13 @@ func (r *Review) State(v ReviewState) *Review {
 		return r
 	}
 	r.ghReview.State = new(string(v))
+	return r
+}
+
+func (r *Review) SubmittedAt(t time.Time) *Review {
+	if t.IsZero() {
+		return r
+	}
+	r.ghReview.SubmittedAt = &github.Timestamp{Time: t}
 	return r
 }

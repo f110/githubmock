@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"time"
 
 	"go.yaml.in/yaml/v4"
 
@@ -26,15 +27,17 @@ type Repository struct {
 }
 
 type PullRequest struct {
-	Number   int              `yaml:"number,omitempty"`
-	Title    string           `yaml:"title,omitempty"`
-	Author   string           `yaml:"author,omitempty"`
-	Body     string           `yaml:"body,omitempty"`
-	Base     string           `yaml:"base,omitempty"`
-	Head     *Head            `yaml:"head,omitempty"`
-	State    PullRequestState `yaml:"state,omitempty"`
-	Comments []*Comment       `yaml:"comments,omitempty"`
-	Reviews  []*Review        `yaml:"reviews,omitempty"`
+	Number    int              `yaml:"number,omitempty"`
+	Title     string           `yaml:"title,omitempty"`
+	Author    string           `yaml:"author,omitempty"`
+	Body      string           `yaml:"body,omitempty"`
+	Base      string           `yaml:"base,omitempty"`
+	Head      *Head            `yaml:"head,omitempty"`
+	State     PullRequestState `yaml:"state,omitempty"`
+	Comments  []*Comment       `yaml:"comments,omitempty"`
+	Reviews   []*Review        `yaml:"reviews,omitempty"`
+	CreatedAt time.Time        `yaml:"created_at,omitempty"`
+	UpdatedAt time.Time        `yaml:"updated_at,omitempty"`
 }
 
 type Head struct {
@@ -48,11 +51,13 @@ type Comment struct {
 }
 
 type Issue struct {
-	Number   int        `yaml:"number,omitempty"`
-	Title    string     `yaml:"title,omitempty"`
-	Author   string     `yaml:"author,omitempty"`
-	State    IssueState `yaml:"state,omitempty"`
-	Comments []*Comment `yaml:"comments,omitempty"`
+	Number    int        `yaml:"number,omitempty"`
+	Title     string     `yaml:"title,omitempty"`
+	Author    string     `yaml:"author,omitempty"`
+	State     IssueState `yaml:"state,omitempty"`
+	Comments  []*Comment `yaml:"comments,omitempty"`
+	CreatedAt time.Time  `yaml:"created_at,omitempty"`
+	UpdatedAt time.Time  `yaml:"updated_at,omitempty"`
 }
 
 type Tag struct {
