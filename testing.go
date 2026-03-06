@@ -25,6 +25,7 @@ type Mock struct {
 
 	mu           sync.Mutex
 	repositories map[string]*Repository
+	users        map[string]*User
 }
 
 type Repository struct {
@@ -45,7 +46,11 @@ func newRepository() *Repository {
 }
 
 func NewMock() *Mock {
-	return &Mock{Logger: slog.New(slog.DiscardHandler), repositories: make(map[string]*Repository)}
+	return &Mock{
+		Logger:       slog.New(slog.DiscardHandler),
+		repositories: make(map[string]*Repository),
+		users:        make(map[string]*User),
+	}
 }
 
 func (m *Mock) Repository(name string) *Repository {
@@ -60,11 +65,37 @@ func (m *Mock) Repository(name string) *Repository {
 		return r
 	}
 
+	username := name[:strings.Index(name, "/")]
+	u, ok := m.users[username]
+	if !ok || u == nil {
+		u = m.newUser(username)
+	}
+
 	r := newRepository()
 	r.ghRepository.Name = new(name[strings.Index(name, "/")+1:])
 	r.ghRepository.FullName = new(name)
+	r.ghRepository.Owner = u.ghUser
 	m.repositories[name] = r
 	return r
+}
+
+func (m *Mock) User(login string) *User {
+	if strings.Index(login, "/") != -1 {
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.newUser(login)
+}
+
+func (m *Mock) newUser(name string) *User {
+	if u, ok := m.users[name]; ok {
+		return u
+	}
+	u := NewUser().Login(name)
+	m.users[name] = u
+	return u
 }
 
 func (m *Mock) Transport() http.RoundTripper {
@@ -223,6 +254,7 @@ func (m *Mock) registerMultiplexer(mux *http.ServeMux) {
 	m.registerIssuesService(mux)
 	m.registerRepositoriesService(mux)
 	m.registerGitService(mux)
+	m.registerUserService(mux)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotImplemented)
 	})
@@ -837,9 +869,37 @@ func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 	})
 }
 
+func (m *Mock) registerUserService(mux *http.ServeMux) {
+	// Get a user
+	// GET /users/{username}
+	mux.HandleFunc("GET /users/{username}", func(w http.ResponseWriter, req *http.Request) {
+		u := m.findUser(req)
+		if u == nil {
+			if err := notFoundResponse(w); err != nil {
+				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+			}
+			return
+		}
+		if err := jsonResponse(w, http.StatusOK, u.ghUser); err != nil {
+			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
+		}
+	})
+}
+
 func (m *Mock) findRepository(req *http.Request) *Repository {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if r, ok := m.repositories[fmt.Sprintf("%s/%s", req.PathValue("owner"), req.PathValue("repo"))]; ok {
 		return r
+	}
+	return nil
+}
+
+func (m *Mock) findUser(req *http.Request) *User {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if u, ok := m.users[req.PathValue("username")]; ok {
+		return u
 	}
 	return nil
 }

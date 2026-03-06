@@ -18,6 +18,12 @@ type (
 	CommitState      = githubmock.CommitState
 )
 
+type User struct {
+	Login     string `yaml:"login"`
+	Name      string `yaml:"name,omitempty"`
+	AvatarURL string `yaml:"avatar_url,omitempty"`
+}
+
 type Repository struct {
 	Name         string         `yaml:"name"`
 	PullRequests []*PullRequest `yaml:"pull_requests,omitempty"`
@@ -88,12 +94,13 @@ type Review struct {
 	Body   string      `yaml:"body,omitempty"`
 }
 
-func Load(definitionFiles ...string) ([]*Repository, error) {
+func Load(definitionFiles ...string) ([]*User, []*Repository, error) {
 	var repos []*Repository
+	var users []*User
 	for _, v := range definitionFiles {
 		f, err := os.Open(v)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		decoder := yaml.NewDecoder(f)
@@ -107,21 +114,30 @@ func Load(definitionFiles ...string) ([]*Repository, error) {
 				Kind string `yaml:"kind"`
 			}
 			if err := node.Decode(&k); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
 			switch k.Kind {
+			case "User":
+				user := &User{}
+				if err != nil {
+					return nil, nil, err
+				}
+				if err := node.Decode(user); err != nil {
+					return nil, nil, err
+				}
+				users = append(users, user)
 			default:
 				repo := &Repository{}
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				if err := node.Decode(repo); err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				repos = append(repos, repo)
 			}
 		}
 	}
-	return repos, nil
+	return users, repos, nil
 }

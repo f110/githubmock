@@ -19,12 +19,12 @@ var (
 func main() {
 	flag.Parse()
 
-	repos, err := config.Load(flag.Args()...)
+	users, repos, err := config.Load(flag.Args()...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		os.Exit(1)
 	}
-	mock, err := newMock(repos)
+	mock, err := newMock(users, repos)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create mock: %v\n", err)
 		os.Exit(1)
@@ -43,8 +43,13 @@ func main() {
 	}
 }
 
-func newMock(repos []*config.Repository) (*githubmock.Mock, error) {
+func newMock(users []*config.User, repos []*config.Repository) (*githubmock.Mock, error) {
 	mock := githubmock.NewMock()
+	for _, u := range users {
+		user := mock.User(u.Login)
+		user.Name(u.Name).AvatarURL(u.AvatarURL)
+	}
+
 	m := make(map[string]*githubmock.Repository)
 	for _, v := range repos {
 		m[v.Name] = mock.Repository(v.Name)
@@ -54,9 +59,9 @@ func newMock(repos []*config.Repository) (*githubmock.Mock, error) {
 		repo := m[confRepo.Name]
 
 		for _, pr := range confRepo.PullRequests {
-			comments := make([]*githubmock.Comment, 0, len(pr.Comments))
+			comments := make([]*githubmock.PullRequestComment, 0, len(pr.Comments))
 			for _, c := range pr.Comments {
-				comments = append(comments, &githubmock.Comment{Author: c.Author, Body: c.Body})
+				comments = append(comments, githubmock.NewPullRequestComment().Author(mock.User(c.Author)).Body(c.Body))
 			}
 			reviews := make([]*githubmock.Review, 0, len(pr.Reviews))
 			for _, r := range pr.Reviews {
@@ -66,7 +71,7 @@ func newMock(repos []*config.Repository) (*githubmock.Mock, error) {
 				Number(pr.Number).
 				Title(pr.Title).
 				State(pr.State).
-				Author(pr.Author).
+				Author(mock.User(pr.Author)).
 				Body(pr.Body).
 				Base(pr.Base).
 				Comments(comments...).
@@ -82,12 +87,12 @@ func newMock(repos []*config.Repository) (*githubmock.Mock, error) {
 		for _, issue := range confRepo.Issues {
 			comments := make([]*githubmock.Comment, 0, len(issue.Comments))
 			for _, c := range issue.Comments {
-				comments = append(comments, &githubmock.Comment{Author: c.Author, Body: c.Body})
+				comments = append(comments, githubmock.NewComment().Author(mock.User(c.Author)).Body(c.Body))
 			}
 			b := githubmock.NewIssue().
 				Number(issue.Number).
 				Title(issue.Title).
-				Author(issue.Author).
+				Author(mock.User(issue.Author)).
 				State(issue.State).
 				Comments(comments).
 				CreatedAt(issue.CreatedAt).

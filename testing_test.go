@@ -240,7 +240,7 @@ func TestMock(t *testing.T) {
 		})
 	})
 
-	t.Run("IssueService", func(t *testing.T) {
+	t.Run("IssuesService", func(t *testing.T) {
 		m := NewMock()
 		repo := m.Repository("f110/gh-test")
 		repo.Issues(
@@ -271,7 +271,7 @@ func TestMock(t *testing.T) {
 		t.Run("Create", func(t *testing.T) {
 			pr, _, err := ghClient.Issues.Create(t.Context(), "f110", "gh-test", &github.IssueRequest{})
 			require.NoError(t, err)
-			assert.Equal(t, 1, pr.GetNumber())
+			assert.Equal(t, 2, pr.GetNumber())
 		})
 
 		t.Run("CreateComment", func(t *testing.T) {
@@ -283,6 +283,24 @@ func TestMock(t *testing.T) {
 			issue := repo.GetIssue(1)
 			require.NotNil(t, issue)
 			assert.Len(t, issue.comments, 1)
+		})
+	})
+
+	t.Run("UsersService", func(t *testing.T) {
+		m := NewMock()
+		m.Repository("f110/gh-test")
+		m.User("octocat")
+
+		ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
+
+		t.Run("Get", func(t *testing.T) {
+			user, _, err := ghClient.Users.Get(t.Context(), "octocat")
+			require.NoError(t, err)
+			assert.Equal(t, "octocat", user.GetLogin())
+
+			user, _, err = ghClient.Users.Get(t.Context(), "f110")
+			require.NoError(t, err)
+			assert.Equal(t, "f110", user.GetLogin())
 		})
 	})
 }

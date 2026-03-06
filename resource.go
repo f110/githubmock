@@ -6,6 +6,38 @@ import (
 	"github.com/google/go-github/v83/github"
 )
 
+type User struct {
+	ghUser *github.User
+}
+
+func NewUser() *User {
+	return &User{ghUser: &github.User{}}
+}
+
+func (u *User) Login(v string) *User {
+	if v == "" {
+		return u
+	}
+	u.ghUser.Login = new(v)
+	return u
+}
+
+func (u *User) Name(v string) *User {
+	if v == "" {
+		return u
+	}
+	u.ghUser.Name = new(v)
+	return u
+}
+
+func (u *User) AvatarURL(v string) *User {
+	if v == "" {
+		return u
+	}
+	u.ghUser.AvatarURL = new(v)
+	return u
+}
+
 type Commit struct {
 	ghCommit   *github.Commit
 	isHead     bool
@@ -147,11 +179,11 @@ func (pr *PullRequest) Body(v string) *PullRequest {
 	return pr
 }
 
-func (pr *PullRequest) Author(v string) *PullRequest {
-	if v == "" {
+func (pr *PullRequest) Author(u *User) *PullRequest {
+	if u == nil {
 		return pr
 	}
-	pr.ghPullRequest.User = &github.User{Login: new(v)}
+	pr.ghPullRequest.User = u.ghUser
 	return pr
 }
 
@@ -180,12 +212,9 @@ func (pr *PullRequest) Head(repo *Repository, ref string) *PullRequest {
 	return pr
 }
 
-func (pr *PullRequest) Comments(comments ...*Comment) *PullRequest {
+func (pr *PullRequest) Comments(comments ...*PullRequestComment) *PullRequest {
 	for _, v := range comments {
-		pr.comments = append(pr.comments, &github.PullRequestComment{
-			User: &github.User{Login: new(v.Author)},
-			Body: new(v.Body),
-		})
+		pr.comments = append(pr.comments, v.ghPullRequestComment)
 	}
 	return pr
 }
@@ -245,11 +274,11 @@ func (i *Issue) Title(v string) *Issue {
 	return i
 }
 
-func (i *Issue) Author(v string) *Issue {
-	if v == "" {
+func (i *Issue) Author(u *User) *Issue {
+	if u == nil {
 		return i
 	}
-	i.ghIssue.User = &github.User{Login: new(v)}
+	i.ghIssue.User = u.ghUser
 	return i
 }
 
@@ -263,10 +292,7 @@ func (i *Issue) State(v IssueState) *Issue {
 
 func (i *Issue) Comments(comments []*Comment) *Issue {
 	for _, v := range comments {
-		i.comments = append(i.comments, &github.IssueComment{
-			User: &github.User{Login: new(v.Author)},
-			Body: new(v.Body),
-		})
+		i.comments = append(i.comments, v.ghComment)
 	}
 	return i
 }
@@ -319,8 +345,51 @@ func (t *Tag) toGithubTag() *github.Tag {
 }
 
 type Comment struct {
-	Author string
-	Body   string
+	ghComment *github.IssueComment
+}
+
+func NewComment() *Comment {
+	return &Comment{ghComment: &github.IssueComment{}}
+}
+
+type PullRequestComment struct {
+	ghPullRequestComment *github.PullRequestComment
+}
+
+func NewPullRequestComment() *PullRequestComment {
+	return &PullRequestComment{ghPullRequestComment: &github.PullRequestComment{}}
+}
+
+func (c *PullRequestComment) Author(u *User) *PullRequestComment {
+	if u == nil {
+		return c
+	}
+	c.ghPullRequestComment.User = u.ghUser
+	return c
+}
+
+func (c *PullRequestComment) Body(v string) *PullRequestComment {
+	if v == "" {
+		return c
+	}
+	c.ghPullRequestComment.Body = new(v)
+	return c
+}
+
+func (c *Comment) Author(u *User) *Comment {
+	if u == nil {
+		return c
+	}
+	c.ghComment.User = u.ghUser
+	return c
+}
+
+func (c *Comment) Body(v string) *Comment {
+	if v == "" {
+		return c
+	}
+	c.ghComment.Body = new(v)
+	return c
 }
 
 type ReviewState string
