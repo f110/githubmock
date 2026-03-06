@@ -81,6 +81,12 @@ func newMock(users []*config.User, repos []*config.Repository) (*githubmock.Mock
 			if pr.Head != nil {
 				b.Head(m[pr.Head.Repo], pr.Head.Ref)
 			}
+			if pr.Mergeable {
+				b.Mergeable()
+			}
+			if pr.Merged {
+				b.Merged()
+			}
 			repo.PullRequests(b)
 		}
 

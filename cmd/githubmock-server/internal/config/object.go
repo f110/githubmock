@@ -40,6 +40,8 @@ type PullRequest struct {
 	Base      string           `yaml:"base,omitempty"`
 	Head      *Head            `yaml:"head,omitempty"`
 	State     PullRequestState `yaml:"state,omitempty"`
+	Merged    bool             `yaml:"merged,omitempty"`
+	Mergeable bool             `yaml:"mergeable,omitempty"`
 	Comments  []*Comment       `yaml:"comments,omitempty"`
 	Reviews   []*Review        `yaml:"reviews,omitempty"`
 	CreatedAt time.Time        `yaml:"created_at,omitempty"`

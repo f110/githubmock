@@ -133,6 +133,9 @@ func (r *Repository) PullRequests(pullRequests ...*PullRequest) {
 			v.ghPullRequest.Base = &github.PullRequestBranch{}
 		}
 		v.ghPullRequest.Base.Repo = r.ghRepository
+		if v.headRepo == nil {
+			v.headRepo = r
+		}
 	}
 }
 

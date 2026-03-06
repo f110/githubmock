@@ -152,7 +152,12 @@ type PullRequest struct {
 }
 
 func NewPullRequest() *PullRequest {
-	return &PullRequest{ghPullRequest: &github.PullRequest{}}
+	return &PullRequest{ghPullRequest: &github.PullRequest{
+		Merged:    new(false),
+		Mergeable: new(false),
+		CreatedAt: &github.Timestamp{Time: time.Now()},
+		UpdatedAt: &github.Timestamp{Time: time.Now()},
+	}}
 }
 
 func (pr *PullRequest) Number(v int) *PullRequest {
@@ -204,11 +209,23 @@ func (pr *PullRequest) Base(ref string) *PullRequest {
 }
 
 func (pr *PullRequest) Head(repo *Repository, ref string) *PullRequest {
-	if repo == nil || ref == "" {
+	if ref == "" {
 		return pr
 	}
-	pr.headRepo = repo
+	if repo != nil {
+		pr.headRepo = repo
+	}
 	pr.ghPullRequest.Head = &github.PullRequestBranch{Ref: new(ref)}
+	return pr
+}
+
+func (pr *PullRequest) Merged() *PullRequest {
+	pr.ghPullRequest.Merged = new(true)
+	return pr
+}
+
+func (pr *PullRequest) Mergeable() *PullRequest {
+	pr.ghPullRequest.Mergeable = new(true)
 	return pr
 }
 
@@ -216,6 +233,7 @@ func (pr *PullRequest) Comments(comments ...*PullRequestComment) *PullRequest {
 	for _, v := range comments {
 		pr.comments = append(pr.comments, v.ghPullRequestComment)
 	}
+	pr.ghPullRequest.Comments = new(len(pr.comments))
 	return pr
 }
 

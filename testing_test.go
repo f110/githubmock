@@ -22,6 +22,7 @@ func TestMock(t *testing.T) {
 					Body("PR description").
 					Base("master").
 					Head(nil, "feature-1").
+					Mergeable().
 					CreatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)).
 					UpdatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)),
 			)
@@ -35,6 +36,7 @@ func TestMock(t *testing.T) {
 			assert.Equal(t, "f110/gh-test", pr.Base.Repo.GetFullName())
 			assert.Equal(t, "2022-01-01T01:01:01Z", pr.GetCreatedAt().Format(time.RFC3339))
 			assert.Equal(t, "2022-01-01T01:01:01Z", pr.GetUpdatedAt().Format(time.RFC3339))
+			assert.True(t, pr.GetMergeable())
 		})
 
 		t.Run("List", func(t *testing.T) {
@@ -53,6 +55,8 @@ func TestMock(t *testing.T) {
 			prs, _, err := ghClient.PullRequests.List(t.Context(), "f110", "gh-test", &github.PullRequestListOptions{})
 			require.NoError(t, err)
 			assert.Len(t, prs, 1)
+			assert.NotNil(t, prs[0].CreatedAt)
+			assert.NotNil(t, prs[0].UpdatedAt)
 		})
 
 		t.Run("Create", func(t *testing.T) {
