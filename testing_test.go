@@ -214,6 +214,7 @@ func TestMock(t *testing.T) {
 	t.Run("RepositoriesService", func(t *testing.T) {
 		m := NewMock()
 		repo := m.Repository("f110/gh-test")
+		repo.DefaultBranch("main")
 		err := repo.Commits(
 			NewCommit().
 				IsHead().
@@ -228,6 +229,7 @@ func TestMock(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "gh-test", r.GetName())
 			assert.Equal(t, "f110/gh-test", r.GetFullName())
+			assert.Equal(t, "main", r.GetDefaultBranch())
 		})
 
 		t.Run("GetCommit", func(t *testing.T) {

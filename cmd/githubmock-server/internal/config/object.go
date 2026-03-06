@@ -25,11 +25,12 @@ type User struct {
 }
 
 type Repository struct {
-	Name         string         `yaml:"name"`
-	PullRequests []*PullRequest `yaml:"pull_requests,omitempty"`
-	Issues       []*Issue       `yaml:"issues,omitempty"`
-	Tags         []*Tag         `yaml:"tags,omitempty"`
-	Commits      []*Commit      `yaml:"commits,omitempty"`
+	Name          string         `yaml:"name"`
+	PullRequests  []*PullRequest `yaml:"pull_requests,omitempty"`
+	Issues        []*Issue       `yaml:"issues,omitempty"`
+	Tags          []*Tag         `yaml:"tags,omitempty"`
+	Commits       []*Commit      `yaml:"commits,omitempty"`
+	DefaultBranch string         `yaml:"default_branch,omitempty"`
 }
 
 type PullRequest struct {

@@ -53,6 +53,9 @@ func newMock(users []*config.User, repos []*config.Repository) (*githubmock.Mock
 	m := make(map[string]*githubmock.Repository)
 	for _, v := range repos {
 		m[v.Name] = mock.Repository(v.Name)
+		if v.DefaultBranch != "" {
+			m[v.Name].DefaultBranch(v.DefaultBranch)
+		}
 	}
 
 	for _, confRepo := range repos {

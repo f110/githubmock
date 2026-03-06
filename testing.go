@@ -252,6 +252,10 @@ func (r *Repository) Tags(tags ...*Tag) {
 	r.tags = append(r.tags, tags...)
 }
 
+func (r *Repository) DefaultBranch(v string) {
+	r.ghRepository.DefaultBranch = &v
+}
+
 func (m *Mock) registerMultiplexer(mux *http.ServeMux) {
 	m.registerPullRequestService(mux)
 	m.registerIssuesService(mux)
