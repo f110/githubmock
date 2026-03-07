@@ -1,6 +1,7 @@
 package githubmock
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,14 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-type Mock struct {
-	Logger *slog.Logger
-
-	mu           sync.Mutex
-	repositories map[string]*Repository
-	users        map[string]*User
-}
-
 type Repository struct {
 	mu           sync.Mutex
 	pullRequests []*PullRequest
@@ -44,70 +37,6 @@ type Repository struct {
 
 func newRepository() *Repository {
 	return &Repository{ghRepository: &github.Repository{}}
-}
-
-func NewMock() *Mock {
-	return &Mock{
-		Logger:       slog.New(slog.DiscardHandler),
-		repositories: make(map[string]*Repository),
-		users:        make(map[string]*User),
-	}
-}
-
-func (m *Mock) Repository(name string) *Repository {
-	if strings.Count(name, "/") != 1 {
-		return nil
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if r, ok := m.repositories[name]; ok {
-		return r
-	}
-
-	username := name[:strings.Index(name, "/")]
-	u, ok := m.users[username]
-	if !ok || u == nil {
-		u = m.newUser(username)
-	}
-
-	r := newRepository()
-	r.ghRepository.Name = new(name[strings.Index(name, "/")+1:])
-	r.ghRepository.FullName = new(name)
-	r.ghRepository.Owner = u.ghUser
-	m.repositories[name] = r
-	return r
-}
-
-func (m *Mock) User(login string) *User {
-	if strings.Index(login, "/") != -1 {
-		return nil
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.newUser(login)
-}
-
-func (m *Mock) newUser(name string) *User {
-	if u, ok := m.users[name]; ok {
-		return u
-	}
-	u := NewUser().Login(name)
-	m.users[name] = u
-	return u
-}
-
-func (m *Mock) Transport() http.RoundTripper {
-	mux := http.NewServeMux()
-	m.RegisterHandler(mux)
-
-	return &transport{handler: mux}
-}
-
-func (m *Mock) RegisterHandler(mux *http.ServeMux) {
-	m.registerMultiplexer(mux)
 }
 
 func (r *Repository) AssertPullRequest(t *testing.T, number int) *PullRequest {
@@ -257,6 +186,101 @@ func (r *Repository) DefaultBranch(v string) {
 	r.ghRepository.DefaultBranch = &v
 }
 
+func (r *Repository) NextIndex() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.nextIndex()
+}
+
+func (r *Repository) nextIndex() int {
+	var lastIndex int
+	for _, v := range r.pullRequests {
+		if v.ghPullRequest.GetNumber() > lastIndex {
+			lastIndex = v.ghPullRequest.GetNumber()
+		}
+	}
+	for _, v := range r.issues {
+		if v.ghIssue.GetNumber() > lastIndex {
+			lastIndex = v.ghIssue.GetNumber()
+		}
+	}
+
+	return lastIndex + 1
+}
+
+type Mock struct {
+	Logger *slog.Logger
+
+	mu           sync.Mutex
+	repositories map[string]*Repository
+	users        map[string]*User
+}
+
+func NewMock() *Mock {
+	return &Mock{
+		Logger:       slog.New(slog.DiscardHandler),
+		repositories: make(map[string]*Repository),
+		users:        make(map[string]*User),
+	}
+}
+
+func (m *Mock) Repository(name string) *Repository {
+	if strings.Count(name, "/") != 1 {
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if r, ok := m.repositories[name]; ok {
+		return r
+	}
+
+	username := name[:strings.Index(name, "/")]
+	u, ok := m.users[username]
+	if !ok || u == nil {
+		u = m.newUser(username)
+	}
+
+	r := newRepository()
+	r.ghRepository.Name = new(name[strings.Index(name, "/")+1:])
+	r.ghRepository.FullName = new(name)
+	r.ghRepository.Owner = u.ghUser
+	m.repositories[name] = r
+	return r
+}
+
+func (m *Mock) User(login string) *User {
+	if strings.Index(login, "/") != -1 {
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.newUser(login)
+}
+
+func (m *Mock) newUser(name string) *User {
+	if u, ok := m.users[name]; ok {
+		return u
+	}
+	u := NewUser().Login(name)
+	m.users[name] = u
+	return u
+}
+
+func (m *Mock) Transport() http.RoundTripper {
+	mux := http.NewServeMux()
+	m.RegisterHandler(mux)
+
+	return &transport{handler: mux}
+}
+
+func (m *Mock) RegisterHandler(mux *http.ServeMux) {
+	m.registerMultiplexer(mux)
+}
+
 func (m *Mock) registerMultiplexer(mux *http.ServeMux) {
 	m.registerPullRequestService(mux)
 	m.registerIssuesService(mux)
@@ -274,31 +298,23 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 	mux.HandleFunc("GET /repos/{owner}/{repo}/pulls/{number}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
-			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
 			return
 		}
 		pr := r.GetPullRequest(num)
-		if err := jsonResponse(w, http.StatusOK, pr.ghPullRequest); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode pull request response", slog.Any("err", err))
-		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, pr.ghPullRequest)
 	})
 	// List pull requests
 	// GET /repos/octocat/example/pulls
 	mux.HandleFunc("GET /repos/{owner}/{repo}/pulls", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 
@@ -343,25 +359,19 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 			slices.Reverse(prs)
 		}
 
-		if err := jsonResponse(w, http.StatusOK, prs); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode pull request response", slog.Any("err", err))
-		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, prs)
 	})
 	// Create a pull request
 	// POST /repos/octocat/example/pulls
 	mux.HandleFunc("POST /repos/{owner}/{repo}/pulls", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		var reqPR github.NewPullRequest
 		if err := json.NewDecoder(req.Body).Decode(&reqPR); err != nil {
-			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
 			return
 		}
 
@@ -377,32 +387,24 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 			},
 		}
 		r.PullRequests(&PullRequest{ghPullRequest: pr})
-		if err := jsonResponse(w, http.StatusOK, pr); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode pull request response", slog.Any("err", err))
-		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, pr)
 	})
 	// Update a pull request
 	// PATCH /repos/octocat/example/pulls/1
 	mux.HandleFunc("PATCH /repos/{owner}/{repo}/pulls/{number}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
-			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
 			return
 		}
 		pr := r.GetPullRequest(num)
 		if pr == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		var reqPR struct {
@@ -413,9 +415,7 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 			MaintainerCanModify *bool   `json:"maintainer_can_modify,omitempty"`
 		}
 		if err := json.NewDecoder(req.Body).Decode(&reqPR); err != nil {
-			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
 			return
 		}
 
@@ -438,46 +438,34 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 			pr.ghPullRequest.MaintainerCanModify = reqPR.MaintainerCanModify
 		}
 
-		if err := jsonResponse(w, http.StatusOK, pr.ghPullRequest); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode pull request response", slog.Any("err", err))
-		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, pr.ghPullRequest)
 	})
 	// Create a new comment
 	// POST /repos/octocat/example/pulls/1/comments
 	mux.HandleFunc("POST /repos/{owner}/{repo}/pulls/{number}/comments", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
-			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
 			return
 		}
 		pr := r.GetPullRequest(num)
 		if pr == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		var comment github.PullRequestComment
 		if err := json.NewDecoder(req.Body).Decode(&comment); err != nil {
-			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
 			return
 		}
 
 		pr.comments = append(pr.comments, &comment)
-		if err := jsonResponse(w, http.StatusOK, comment); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode pull request response", slog.Any("err", err))
-		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, comment)
 		return
 	})
 	// List reviews
@@ -485,22 +473,16 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 	mux.HandleFunc("GET /repos/{owner}/{repo}/pulls/{number}/reviews", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
-			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
 			return
 		}
 		pr := r.GetPullRequest(num)
-		if err := jsonResponse(w, http.StatusOK, pr.reviews); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode pull request response", slog.Any("err", err))
-		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, pr.reviews)
 	})
 }
 
@@ -510,36 +492,26 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 	mux.HandleFunc("GET /repos/{owner}/{repo}/git/commits/{sha}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		s := strings.Split(req.URL.Path, "/")
 		sha := s[len(s)-1]
 		if sha == "HEAD" { // Special case
 			if r.headCommit == nil {
-				if err := notFoundResponse(w); err != nil {
-					m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-				}
+				m.notFoundResponse(req.Context(), w)
 				return
 			}
-			if err := jsonResponse(w, http.StatusOK, r.headCommit.ghCommit); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.jsonResponse(req.Context(), w, http.StatusOK, r.headCommit.ghCommit)
 			return
 		}
 		for _, v := range r.commits {
 			if v.ghCommit.GetSHA() == sha {
-				if err := jsonResponse(w, http.StatusOK, v.ghCommit); err != nil {
-					m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-				}
+				m.jsonResponse(req.Context(), w, http.StatusOK, v.ghCommit)
 				return
 			}
 		}
-		if err := notFoundResponse(w); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-		}
+		m.notFoundResponse(req.Context(), w)
 		return
 	})
 	// Get tree
@@ -547,9 +519,7 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 	mux.HandleFunc("GET /repos/{owner}/{repo}/git/trees/{sha}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		sha := req.PathValue("sha")
@@ -563,9 +533,7 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 			}
 		}
 		if prefix == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 
@@ -611,9 +579,7 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 			SHA:     new(sha),
 			Entries: entries,
 		}
-		if err := jsonResponse(w, http.StatusOK, tree); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, tree)
 		return
 	})
 	// Get blob
@@ -621,9 +587,7 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 	mux.HandleFunc("GET /repos/{owner}/{repo}/git/blobs/{sha}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		sha := req.PathValue("sha")
@@ -635,9 +599,7 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 				}
 			}
 		}
-		if err := notFoundResponse(w); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-		}
+		m.notFoundResponse(req.Context(), w)
 		return
 	})
 	// Get ref
@@ -645,9 +607,7 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 	mux.HandleFunc("GET /repos/{owner}/{repo}/git/ref/tags/{sha}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		s := strings.Split(req.URL.Path, "/")
@@ -662,16 +622,12 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 							Type: new("commit"),
 						},
 					}
-					if err := jsonResponse(w, http.StatusOK, reference); err != nil {
-						m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-					}
+					m.jsonResponse(req.Context(), w, http.StatusOK, reference)
 					return
 				}
 			}
 		}
-		if err := notFoundResponse(w); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-		}
+		m.notFoundResponse(req.Context(), w)
 		return
 	})
 }
@@ -682,36 +638,26 @@ func (m *Mock) registerRepositoriesService(mux *http.ServeMux) {
 	mux.HandleFunc("GET /repos/{owner}/{repo}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
-		if err := jsonResponse(w, http.StatusOK, r.ghRepository); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, r.ghRepository)
 	})
 	// Get commit
 	// GET /repos/octocat/example/commits/{sha}
 	mux.HandleFunc("GET /repos/{owner}/{repo}/commits/{sha}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		sha := req.PathValue("sha")
 		if sha == "HEAD" { // Special case
 			if r.headCommit == nil {
-				if err := notFoundResponse(w); err != nil {
-
-				}
+				m.notFoundResponse(req.Context(), w)
 				return
 			}
-			if err := jsonResponse(w, http.StatusOK, &github.RepositoryCommit{SHA: r.headCommit.ghCommit.SHA, Commit: r.headCommit.ghCommit}); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.jsonResponse(req.Context(), w, http.StatusOK, &github.RepositoryCommit{SHA: r.headCommit.ghCommit.SHA, Commit: r.headCommit.ghCommit})
 			return
 		}
 		for _, c := range r.commits {
@@ -720,15 +666,11 @@ func (m *Mock) registerRepositoriesService(mux *http.ServeMux) {
 					SHA:    c.ghCommit.SHA,
 					Commit: c.ghCommit,
 				}
-				if err := jsonResponse(w, http.StatusOK, commit); err != nil {
-					m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-				}
+				m.jsonResponse(req.Context(), w, http.StatusOK, commit)
 				return
 			}
 		}
-		if err := notFoundResponse(w); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-		}
+		m.notFoundResponse(req.Context(), w)
 		return
 	})
 	// Create commit status
@@ -736,16 +678,12 @@ func (m *Mock) registerRepositoriesService(mux *http.ServeMux) {
 	mux.HandleFunc("POST /repos/{owner}/{repo}/statuses/{sha}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		var status github.RepoStatus
 		if err := json.NewDecoder(req.Body).Decode(&status); err != nil {
-			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
 			return
 		}
 
@@ -753,9 +691,7 @@ func (m *Mock) registerRepositoriesService(mux *http.ServeMux) {
 		var commit *Commit
 		if sha == "HEAD" {
 			if r.headCommit == nil {
-				if err := notFoundResponse(w); err != nil {
-					m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-				}
+				m.notFoundResponse(req.Context(), w)
 				return
 			}
 			commit = r.headCommit
@@ -768,15 +704,11 @@ func (m *Mock) registerRepositoriesService(mux *http.ServeMux) {
 			}
 		}
 		if commit == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		commit.ghStatuses = append(commit.ghStatuses, &status)
-		if err := jsonResponse(w, http.StatusOK, status); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, status)
 		return
 	})
 }
@@ -787,32 +719,24 @@ func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 	mux.HandleFunc("GET /repos/{owner}/{repo}/issues/{number}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 
 		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
-			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
 			return
 		}
 		issue := r.GetIssue(num)
-		if err := jsonResponse(w, http.StatusOK, issue.ghIssue); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, issue.ghIssue)
 	})
 	// Get issues
 	// GET /repos/octocat/example/issues
 	mux.HandleFunc("GET /repos/{owner}/{repo}/issues", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 
@@ -820,26 +744,20 @@ func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 		for _, v := range r.GetIssues() {
 			issues = append(issues, v.ghIssue)
 		}
-		if err := jsonResponse(w, http.StatusOK, issues); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, issues)
 	})
 	// Create issue
 	// Post /repos/octocat/example/issues
 	mux.HandleFunc("POST /repos/{owner}/{repo}/issues", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 
 		var reqIssue github.IssueRequest
 		if err := json.NewDecoder(req.Body).Decode(&reqIssue); err != nil {
-			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
 			return
 		}
 
@@ -849,9 +767,7 @@ func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 			Body:   reqIssue.Body,
 		}
 		r.Issues(&Issue{ghIssue: issue})
-		if err := jsonResponse(w, http.StatusOK, issue); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode issue response", slog.Any("err", err))
-		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, issue)
 		return
 	})
 	// Create a new comment
@@ -859,16 +775,12 @@ func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 	mux.HandleFunc("POST /repos/{owner}/{repo}/issues/{number}/comments", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.notFoundResponse(req.Context(), w)
 			return
 		}
 		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
-			if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
 			return
 		}
 
@@ -876,16 +788,12 @@ func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 		if issue != nil {
 			var comment github.IssueComment
 			if err := json.NewDecoder(req.Body).Decode(&comment); err != nil {
-				if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
-					m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-				}
+				m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
 				return
 			}
 
 			issue.comments = append(issue.comments, &comment)
-			if err := jsonResponse(w, http.StatusOK, comment); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode issue response", slog.Any("err", err))
-			}
+			m.jsonResponse(req.Context(), w, http.StatusOK, comment)
 			return
 		}
 
@@ -893,24 +801,18 @@ func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 		if pr != nil {
 			var comment github.IssueComment
 			if err := json.NewDecoder(req.Body).Decode(&comment); err != nil {
-				if err := errResponse(w, http.StatusBadRequest, err.Error()); err != nil {
-					m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-				}
+				m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
 				return
 			}
 
 			pr.comments = append(pr.comments, &github.PullRequestComment{
 				Body: comment.Body,
 			})
-			if err := jsonResponse(w, http.StatusOK, comment); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode issue response", slog.Any("err", err))
-			}
+			m.jsonResponse(req.Context(), w, http.StatusOK, comment)
 			return
 		}
 
-		if err := notFoundResponse(w); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-		}
+		m.notFoundResponse(req.Context(), w)
 		return
 	})
 }
@@ -921,14 +823,9 @@ func (m *Mock) registerUserService(mux *http.ServeMux) {
 	mux.HandleFunc("GET /users/{username}", func(w http.ResponseWriter, req *http.Request) {
 		u := m.findUser(req)
 		if u == nil {
-			if err := notFoundResponse(w); err != nil {
-				m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-			}
-			return
+			m.notFoundResponse(req.Context(), w)
 		}
-		if err := jsonResponse(w, http.StatusOK, u.ghUser); err != nil {
-			m.Logger.ErrorContext(req.Context(), "failed to encode error response", slog.Any("err", err))
-		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, u.ghUser)
 	})
 }
 
@@ -950,51 +847,24 @@ func (m *Mock) findUser(req *http.Request) *User {
 	return nil
 }
 
-func (r *Repository) NextIndex() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	return r.nextIndex()
-}
-
-func (r *Repository) nextIndex() int {
-	var lastIndex int
-	for _, v := range r.pullRequests {
-		if v.ghPullRequest.GetNumber() > lastIndex {
-			lastIndex = v.ghPullRequest.GetNumber()
-		}
-	}
-	for _, v := range r.issues {
-		if v.ghIssue.GetNumber() > lastIndex {
-			lastIndex = v.ghIssue.GetNumber()
-		}
-	}
-
-	return lastIndex + 1
-}
-
-func notFoundResponse(w http.ResponseWriter) error {
-	return errResponse(w, http.StatusNotFound, "Not found")
+func (m *Mock) notFoundResponse(ctx context.Context, w http.ResponseWriter) {
+	m.errResponse(ctx, w, http.StatusNotFound, "Not found")
 }
 
 type errorResponse struct {
 	Message string `json:"message"`
 }
 
-func errResponse(w http.ResponseWriter, status int, message string) error {
-	if err := jsonResponse(w, status, &errorResponse{Message: message}); err != nil {
-		return err
-	}
-	return nil
+func (m *Mock) errResponse(ctx context.Context, w http.ResponseWriter, status int, message string) {
+	m.jsonResponse(ctx, w, status, &errorResponse{Message: message})
 }
 
-func jsonResponse(w http.ResponseWriter, status int, data any) error {
+func (m *Mock) jsonResponse(ctx context.Context, w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		return err
+		m.Logger.ErrorContext(ctx, "failed to encode response", slog.Any("err", err))
 	}
-	return nil
 }
 
 func newHash() string {
