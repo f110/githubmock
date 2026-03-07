@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -211,6 +213,9 @@ func (r *Repository) nextIndex() int {
 
 type Mock struct {
 	Logger *slog.Logger
+	Scheme string
+	Host   string
+	Port   int
 
 	mu           sync.Mutex
 	repositories map[string]*Repository
@@ -359,7 +364,7 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 			slices.Reverse(prs)
 		}
 
-		m.jsonResponse(req.Context(), w, http.StatusOK, prs)
+		m.jsonWithPaginationResponse(req.Context(), w, req, http.StatusOK, prs)
 	})
 	// Create a pull request
 	// POST /repos/octocat/example/pulls
@@ -744,7 +749,7 @@ func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 		for _, v := range r.GetIssues() {
 			issues = append(issues, v.ghIssue)
 		}
-		m.jsonResponse(req.Context(), w, http.StatusOK, issues)
+		m.jsonWithPaginationResponse(req.Context(), w, req, http.StatusOK, issues)
 	})
 	// Create issue
 	// Post /repos/octocat/example/issues
@@ -863,6 +868,72 @@ func (m *Mock) jsonResponse(ctx context.Context, w http.ResponseWriter, status i
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
+		m.Logger.ErrorContext(ctx, "failed to encode response", slog.Any("err", err))
+	}
+}
+
+func (m *Mock) jsonWithPaginationResponse(ctx context.Context, w http.ResponseWriter, req *http.Request, status int, data any) {
+	val := reflect.ValueOf(data)
+	if val.Kind() != reflect.Slice {
+		panic("data must be a slice")
+	}
+
+	perPage, err := strconv.Atoi(req.URL.Query().Get("per_page"))
+	if perPage <= 0 || err != nil {
+		perPage = 30
+	}
+	page, err := strconv.Atoi(req.URL.Query().Get("page"))
+	if page <= 0 || err != nil {
+		page = 1
+	}
+	first := (page - 1) * perPage
+	end := first + perPage
+	if val.Len() < end {
+		end = val.Len()
+	}
+	lastPage := val.Len()/perPage + 1
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	linkURL := &url.URL{}
+	*linkURL = *req.URL
+	linkURL.Scheme = m.Scheme
+	if (m.Scheme == "http" && m.Port == 80) || (m.Scheme == "https" && m.Port == 443) {
+		linkURL.Host = m.Host
+	} else {
+		linkURL.Host = fmt.Sprintf("%s:%d", m.Host, m.Port)
+	}
+	linkURL.Host = "localhost:5620"
+	var links []string
+	if page > 1 {
+		prevLink := *linkURL
+		q := prevLink.Query()
+		q.Set("page", strconv.Itoa(page-1))
+		prevLink.RawQuery = q.Encode()
+		links = append(links, fmt.Sprintf(`<%s>; rel="prev"`, prevLink.String()))
+		firstLink := *req.URL
+		q = firstLink.Query()
+		q.Set("page", strconv.Itoa(1))
+		firstLink.RawQuery = q.Encode()
+		links = append(links, fmt.Sprintf(`<%s>; rel="first"`, firstLink.String()))
+	}
+	if page != lastPage {
+		lastLink := *linkURL
+		q := lastLink.Query()
+		q.Set("page", fmt.Sprintf("%d", lastPage))
+		lastLink.RawQuery = q.Encode()
+		links = append(links, fmt.Sprintf(`<%s>; rel="last"`, lastLink.String()))
+	}
+	if page < lastPage {
+		nextLink := *linkURL
+		q := nextLink.Query()
+		q.Set("page", strconv.Itoa(page+1))
+		nextLink.RawQuery = q.Encode()
+		links = append(links, fmt.Sprintf(`<%s>; rel="next"`, nextLink.String()))
+	}
+	w.Header().Set("Link", strings.Join(links, ", "))
+	w.WriteHeader(status)
+	ret := val.Slice(first, end)
+	if err := json.NewEncoder(w).Encode(ret.Interface()); err != nil {
 		m.Logger.ErrorContext(ctx, "failed to encode response", slog.Any("err", err))
 	}
 }

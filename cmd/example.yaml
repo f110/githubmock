@@ -3,6 +3,19 @@ pull_requests:
   - number: 1
     title: Fix
     body: Please review the changes and merge if everything looks good.
+    state: open
+  - number: 2
+    title: Fix 2
+    state: open
+  - number: 3
+    title: Implement
+    state: open
+  - number: 4
+    title: Security fix
+    state: open
+  - number: 5
+    title: Feature
+    state: open
 issues:
   - number: 2
     title: Bug

@@ -4,8 +4,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"go.f110.dev/githubmock"
@@ -29,6 +31,20 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to create mock: %v\n", err)
 		os.Exit(1)
 	}
+
+	_, p, err := net.SplitHostPort(*listen)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse listen address: %v\n", err)
+		os.Exit(1)
+	}
+	port, err := strconv.Atoi(p)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse port: %v\n", err)
+		os.Exit(1)
+	}
+	mock.Scheme = "http"
+	mock.Host = "localhost"
+	mock.Port = port
 
 	mux := http.NewServeMux()
 	mock.RegisterHandler(mux)
