@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -300,10 +301,48 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 			}
 			return
 		}
+
+		// Filtering
+		state := "open"
+		if req.URL.Query().Get("state") != "" {
+			state = req.URL.Query().Get("state")
+		}
 		var prs []*github.PullRequest
 		for _, v := range r.GetPullRequests() {
-			prs = append(prs, v.ghPullRequest)
+			if v.ghPullRequest.GetState() == state || state == "all" {
+				prs = append(prs, v.ghPullRequest)
+			}
 		}
+
+		// Sorting
+		sort := "created"
+		if req.URL.Query().Get("sort") != "" {
+			sort = req.URL.Query().Get("sort")
+		}
+		var direction string
+		switch sort {
+		case "created":
+			direction = "desc"
+		default:
+			direction = "asc"
+		}
+		if req.URL.Query().Get("direction") != "" {
+			direction = req.URL.Query().Get("direction")
+		}
+		slices.SortFunc(prs, func(a, b *github.PullRequest) int {
+			switch sort {
+			case "created":
+				return a.CreatedAt.Time.Compare(b.CreatedAt.Time)
+			case "updated":
+				return a.UpdatedAt.Time.Compare(b.UpdatedAt.Time)
+			default:
+				return a.CreatedAt.Time.Compare(b.CreatedAt.Time)
+			}
+		})
+		if direction == "desc" {
+			slices.Reverse(prs)
+		}
+
 		if err := jsonResponse(w, http.StatusOK, prs); err != nil {
 			m.Logger.ErrorContext(req.Context(), "failed to encode pull request response", slog.Any("err", err))
 		}

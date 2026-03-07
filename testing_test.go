@@ -46,17 +46,46 @@ func TestMock(t *testing.T) {
 				NewPullRequest().
 					Number(1).
 					Title(t.Name()).
+					State(PullRequestStateOpen).
 					Body("PR description").
 					Base("master").
-					Head(nil, "feature-1"),
+					Head(nil, "feature-1").
+					CreatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)).
+					UpdatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)),
+				NewPullRequest().
+					Number(2).
+					Title("PR 2").
+					State(PullRequestStateClosed).
+					Base("master").
+					CreatedAt(time.Date(2023, 1, 1, 1, 1, 1, 0, time.UTC)).
+					UpdatedAt(time.Date(2023, 1, 1, 1, 1, 1, 0, time.UTC)),
 			)
 			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 
-			prs, _, err := ghClient.PullRequests.List(t.Context(), "f110", "gh-test", &github.PullRequestListOptions{})
+			prs, _, err := ghClient.PullRequests.List(t.Context(), "f110", "gh-test", &github.PullRequestListOptions{State: "open"})
 			require.NoError(t, err)
 			assert.Len(t, prs, 1)
 			assert.NotNil(t, prs[0].CreatedAt)
 			assert.NotNil(t, prs[0].UpdatedAt)
+
+			prs, _, err = ghClient.PullRequests.List(t.Context(), "f110", "gh-test", &github.PullRequestListOptions{State: "closed"})
+			require.NoError(t, err)
+			assert.Len(t, prs, 1)
+			assert.Equal(t, "closed", prs[0].GetState())
+
+			prs, _, err = ghClient.PullRequests.List(t.Context(), "f110", "gh-test", &github.PullRequestListOptions{State: "all"})
+			require.NoError(t, err)
+			assert.Len(t, prs, 2)
+
+			prs, _, err = ghClient.PullRequests.List(t.Context(), "f110", "gh-test", &github.PullRequestListOptions{State: "all", Sort: "created"})
+			require.NoError(t, err)
+			assert.Len(t, prs, 2)
+			assert.Equal(t, 2, prs[0].GetNumber())
+
+			prs, _, err = ghClient.PullRequests.List(t.Context(), "f110", "gh-test", &github.PullRequestListOptions{State: "all", Sort: "updated", Direction: "asc"})
+			require.NoError(t, err)
+			assert.Len(t, prs, 2)
+			assert.Equal(t, 1, prs[0].GetNumber())
 		})
 
 		t.Run("Create", func(t *testing.T) {
