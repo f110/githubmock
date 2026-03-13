@@ -338,4 +338,25 @@ func TestMock(t *testing.T) {
 			assert.Equal(t, "f110", user.GetLogin())
 		})
 	})
+
+	t.Run("TeamsService", func(t *testing.T) {
+		m := NewMock()
+		m.Team("f110/team1")
+		m.User("octocat").Team("f110/team1")
+		m.User("octocat2").Team("f110/team1")
+
+		ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
+
+		t.Run("GetTeamBySlug", func(t *testing.T) {
+			team, _, err := ghClient.Teams.GetTeamBySlug(t.Context(), "f110", "team1")
+			require.NoError(t, err)
+			assert.Equal(t, "team1", team.GetSlug())
+		})
+
+		t.Run("ListTeamMembersBySlug", func(t *testing.T) {
+			users, _, err := ghClient.Teams.ListTeamMembersBySlug(t.Context(), "f110", "team1", nil)
+			require.NoError(t, err)
+			require.Len(t, users, 2)
+		})
+	})
 }

@@ -19,9 +19,16 @@ type (
 )
 
 type User struct {
-	Login     string `yaml:"login"`
-	Name      string `yaml:"name,omitempty"`
-	AvatarURL string `yaml:"avatar_url,omitempty"`
+	Login     string   `yaml:"login"`
+	Name      string   `yaml:"name,omitempty"`
+	AvatarURL string   `yaml:"avatar_url,omitempty"`
+	Teams     []string `yaml:"teams,omitempty"`
+}
+
+type Team struct {
+	Organization string `yaml:"organization"`
+	Slug         string `yaml:"slug"`
+	Name         string `yaml:"name,omitempty"`
 }
 
 type Repository struct {
@@ -97,13 +104,14 @@ type Review struct {
 	Body   string      `yaml:"body,omitempty"`
 }
 
-func Load(definitionFiles ...string) ([]*User, []*Repository, error) {
-	var repos []*Repository
+func Load(definitionFiles ...string) ([]*Team, []*User, []*Repository, error) {
+	var teams []*Team
 	var users []*User
+	var repos []*Repository
 	for _, v := range definitionFiles {
 		f, err := os.Open(v)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		decoder := yaml.NewDecoder(f)
@@ -117,30 +125,30 @@ func Load(definitionFiles ...string) ([]*User, []*Repository, error) {
 				Kind string `yaml:"kind"`
 			}
 			if err := node.Decode(&k); err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 
 			switch k.Kind {
 			case "User":
 				user := &User{}
-				if err != nil {
-					return nil, nil, err
-				}
 				if err := node.Decode(user); err != nil {
-					return nil, nil, err
+					return nil, nil, nil, err
 				}
 				users = append(users, user)
+			case "Team":
+				team := &Team{}
+				if err := node.Decode(team); err != nil {
+					return nil, nil, nil, err
+				}
+				teams = append(teams, team)
 			default:
 				repo := &Repository{}
-				if err != nil {
-					return nil, nil, err
-				}
 				if err := node.Decode(repo); err != nil {
-					return nil, nil, err
+					return nil, nil, nil, err
 				}
 				repos = append(repos, repo)
 			}
 		}
 	}
-	return users, repos, nil
+	return teams, users, repos, nil
 }

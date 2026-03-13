@@ -220,6 +220,7 @@ type Mock struct {
 	mu           sync.Mutex
 	repositories map[string]*Repository
 	users        map[string]*User
+	teams        map[string]*Team
 }
 
 func NewMock() *Mock {
@@ -227,6 +228,7 @@ func NewMock() *Mock {
 		Logger:       slog.New(slog.DiscardHandler),
 		repositories: make(map[string]*Repository),
 		users:        make(map[string]*User),
+		teams:        make(map[string]*Team),
 	}
 }
 
@@ -275,6 +277,21 @@ func (m *Mock) newUser(name string) *User {
 	return u
 }
 
+func (m *Mock) Team(slug string) *Team {
+	if strings.Index(slug, "/") == -1 {
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if t, ok := m.teams[slug]; ok {
+		return t
+	}
+	t := NewTeam().Slug(slug)
+	m.teams[slug] = t
+	return t
+}
+
 func (m *Mock) Transport() http.RoundTripper {
 	mux := http.NewServeMux()
 	m.RegisterHandler(mux)
@@ -291,7 +308,8 @@ func (m *Mock) registerMultiplexer(mux *http.ServeMux) {
 	m.registerIssuesService(mux)
 	m.registerRepositoriesService(mux)
 	m.registerGitService(mux)
-	m.registerUserService(mux)
+	m.registerUsersService(mux)
+	m.registerTeamsService(mux)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotImplemented)
 	})
@@ -822,15 +840,45 @@ func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 	})
 }
 
-func (m *Mock) registerUserService(mux *http.ServeMux) {
+func (m *Mock) registerUsersService(mux *http.ServeMux) {
 	// Get a user
 	// GET /users/{username}
 	mux.HandleFunc("GET /users/{username}", func(w http.ResponseWriter, req *http.Request) {
 		u := m.findUser(req)
 		if u == nil {
 			m.notFoundResponse(req.Context(), w)
+			return
 		}
 		m.jsonResponse(req.Context(), w, http.StatusOK, u.ghUser)
+	})
+}
+
+func (m *Mock) registerTeamsService(mux *http.ServeMux) {
+	// Get a team
+	// GET /orgs/{org}/teams/{team_slug}
+	mux.HandleFunc("GET /orgs/{org}/teams/{team_slug}", func(w http.ResponseWriter, req *http.Request) {
+		team := m.findTeam(req)
+		if team == nil {
+			m.notFoundResponse(req.Context(), w)
+			return
+		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, team.ghTeam)
+	})
+	// Get team members by slug
+	// GET /orgs/{org}/teams/{team_slug}/members
+	mux.HandleFunc("GET /orgs/{org}/teams/{team_slug}/members", func(w http.ResponseWriter, req *http.Request) {
+		team := m.findTeam(req)
+		if team == nil {
+			m.notFoundResponse(req.Context(), w)
+			return
+		}
+		var users []*github.User
+		for _, u := range m.users {
+			if _, ok := u.teams[fmt.Sprintf("%s/%s", *team.ghTeam.Organization.Login, *team.ghTeam.Slug)]; ok {
+				users = append(users, u.ghUser)
+			}
+		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, users)
 	})
 }
 
@@ -848,6 +896,15 @@ func (m *Mock) findUser(req *http.Request) *User {
 	defer m.mu.Unlock()
 	if u, ok := m.users[req.PathValue("username")]; ok {
 		return u
+	}
+	return nil
+}
+
+func (m *Mock) findTeam(req *http.Request) *Team {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if t, ok := m.teams[fmt.Sprintf("%s/%s", req.PathValue("org"), req.PathValue("team_slug"))]; ok {
+		return t
 	}
 	return nil
 }

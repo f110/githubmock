@@ -1,17 +1,44 @@
 package githubmock
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/go-github/v83/github"
 )
 
+type Team struct {
+	ghTeam *github.Team
+}
+
+func NewTeam() *Team {
+	return &Team{ghTeam: &github.Team{}}
+}
+
+func (t *Team) Name(v string) *Team {
+	if v == "" {
+		return t
+	}
+	t.ghTeam.Name = new(v)
+	return t
+}
+
+func (t *Team) Slug(v string) *Team {
+	if v == "" {
+		return t
+	}
+	t.ghTeam.Slug = new(v[strings.Index(v, "/")+1:])
+	t.ghTeam.Organization = &github.Organization{Login: new(v[:strings.Index(v, "/")])}
+	return t
+}
+
 type User struct {
 	ghUser *github.User
+	teams  map[string]struct{}
 }
 
 func NewUser() *User {
-	return &User{ghUser: &github.User{}}
+	return &User{ghUser: &github.User{}, teams: make(map[string]struct{})}
 }
 
 func (u *User) Login(v string) *User {
@@ -35,6 +62,14 @@ func (u *User) AvatarURL(v string) *User {
 		return u
 	}
 	u.ghUser.AvatarURL = new(v)
+	return u
+}
+
+func (u *User) Team(slug string) *User {
+	if slug == "" {
+		return u
+	}
+	u.teams[slug] = struct{}{}
 	return u
 }
 

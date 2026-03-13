@@ -21,12 +21,12 @@ var (
 func main() {
 	flag.Parse()
 
-	users, repos, err := config.Load(flag.Args()...)
+	teams, users, repos, err := config.Load(flag.Args()...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		os.Exit(1)
 	}
-	mock, err := newMock(users, repos)
+	mock, err := newMock(teams, users, repos)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create mock: %v\n", err)
 		os.Exit(1)
@@ -59,10 +59,18 @@ func main() {
 	}
 }
 
-func newMock(users []*config.User, repos []*config.Repository) (*githubmock.Mock, error) {
+func newMock(teams []*config.Team, users []*config.User, repos []*config.Repository) (*githubmock.Mock, error) {
 	mock := githubmock.NewMock()
+	for _, t := range teams {
+		mock.
+			Team(fmt.Sprintf("%s/%s", t.Organization, t.Slug)).
+			Name(t.Name)
+	}
 	for _, u := range users {
 		user := mock.User(u.Login)
+		for _, v := range u.Teams {
+			user.Team(v)
+		}
 		user.Name(u.Name).AvatarURL(u.AvatarURL)
 	}
 
