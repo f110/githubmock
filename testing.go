@@ -310,35 +310,48 @@ func (m *Mock) registerMultiplexer(mux *http.ServeMux) {
 	m.registerGitService(mux)
 	m.registerUsersService(mux)
 	m.registerTeamsService(mux)
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+	m.registerHandleFunc(mux, "/", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotImplemented)
+	})
+}
+
+func (m *Mock) registerHandleFunc(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {
+	mux.HandleFunc(pattern, func(w http.ResponseWriter, req *http.Request) {
+		defer func() {
+			err := recover()
+			if err != nil && err == escape {
+				return
+			}
+			if err != nil {
+				panic(err)
+			}
+		}()
+
+		handler(w, req)
 	})
 }
 
 func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 	// Get a pull request
 	// GET /repos/octocat/example/pulls/1
-	mux.HandleFunc("GET /repos/{owner}/{repo}/pulls/{number}", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/pulls/{number}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
 			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
-			return
 		}
 		pr := r.GetPullRequest(num)
 		m.jsonResponse(req.Context(), w, http.StatusOK, pr.ghPullRequest)
 	})
 	// List pull requests
 	// GET /repos/octocat/example/pulls
-	mux.HandleFunc("GET /repos/{owner}/{repo}/pulls", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/pulls", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 
 		// Filtering
@@ -386,16 +399,14 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 	})
 	// Create a pull request
 	// POST /repos/octocat/example/pulls
-	mux.HandleFunc("POST /repos/{owner}/{repo}/pulls", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "POST /repos/{owner}/{repo}/pulls", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		var reqPR github.NewPullRequest
 		if err := json.NewDecoder(req.Body).Decode(&reqPR); err != nil {
 			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
-			return
 		}
 
 		pr := &github.PullRequest{
@@ -414,21 +425,18 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 	})
 	// Update a pull request
 	// PATCH /repos/octocat/example/pulls/1
-	mux.HandleFunc("PATCH /repos/{owner}/{repo}/pulls/{number}", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "PATCH /repos/{owner}/{repo}/pulls/{number}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
 			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
-			return
 		}
 		pr := r.GetPullRequest(num)
 		if pr == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		var reqPR struct {
 			Title               *string `json:"title,omitempty"`
@@ -465,44 +473,37 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 	})
 	// Create a new comment
 	// POST /repos/octocat/example/pulls/1/comments
-	mux.HandleFunc("POST /repos/{owner}/{repo}/pulls/{number}/comments", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "POST /repos/{owner}/{repo}/pulls/{number}/comments", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
 			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
-			return
 		}
 		pr := r.GetPullRequest(num)
 		if pr == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		var comment github.PullRequestComment
 		if err := json.NewDecoder(req.Body).Decode(&comment); err != nil {
 			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
-			return
 		}
 
 		pr.comments = append(pr.comments, &comment)
 		m.jsonResponse(req.Context(), w, http.StatusOK, comment)
-		return
 	})
 	// List reviews
 	// GET /repos/octocat/example/pulls/1/reviews
-	mux.HandleFunc("GET /repos/{owner}/{repo}/pulls/{number}/reviews", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/pulls/{number}/reviews", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
 			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
-			return
 		}
 		pr := r.GetPullRequest(num)
 		m.jsonResponse(req.Context(), w, http.StatusOK, pr.reviews)
@@ -512,38 +513,32 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 func (m *Mock) registerGitService(mux *http.ServeMux) {
 	// Get commit
 	// GET /repos/octocat/example/git/commits/{sha}
-	mux.HandleFunc("GET /repos/{owner}/{repo}/git/commits/{sha}", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/git/commits/{sha}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		s := strings.Split(req.URL.Path, "/")
 		sha := s[len(s)-1]
 		if sha == "HEAD" { // Special case
 			if r.headCommit == nil {
 				m.notFoundResponse(req.Context(), w)
-				return
 			}
 			m.jsonResponse(req.Context(), w, http.StatusOK, r.headCommit.ghCommit)
-			return
 		}
 		for _, v := range r.commits {
 			if v.ghCommit.GetSHA() == sha {
 				m.jsonResponse(req.Context(), w, http.StatusOK, v.ghCommit)
-				return
 			}
 		}
 		m.notFoundResponse(req.Context(), w)
-		return
 	})
 	// Get tree
 	// Get /repos/octocat/example/git/trees/{sha}
-	mux.HandleFunc("GET /repos/{owner}/{repo}/git/trees/{sha}", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/git/trees/{sha}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		sha := req.PathValue("sha")
 		var prefix *string
@@ -557,7 +552,6 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 		}
 		if prefix == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 
 		var entries []*github.TreeEntry
@@ -603,15 +597,13 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 			Entries: entries,
 		}
 		m.jsonResponse(req.Context(), w, http.StatusOK, tree)
-		return
 	})
 	// Get blob
 	// GET /repos/octocat/example/git/blobs/{sha}
-	mux.HandleFunc("GET /repos/{owner}/{repo}/git/blobs/{sha}", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/git/blobs/{sha}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		sha := req.PathValue("sha")
 		for _, c := range r.commits {
@@ -623,15 +615,13 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 			}
 		}
 		m.notFoundResponse(req.Context(), w)
-		return
 	})
 	// Get ref
 	// GET /repos/octocat/example/git/ref/tags/{sha}
-	mux.HandleFunc("GET /repos/{owner}/{repo}/git/ref/tags/{sha}", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/git/ref/tags/{sha}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		s := strings.Split(req.URL.Path, "/")
 		ref := plumbing.ReferenceName("refs/" + strings.Join(s[6:], "/"))
@@ -646,42 +636,36 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 						},
 					}
 					m.jsonResponse(req.Context(), w, http.StatusOK, reference)
-					return
 				}
 			}
 		}
 		m.notFoundResponse(req.Context(), w)
-		return
 	})
 }
 
 func (m *Mock) registerRepositoriesService(mux *http.ServeMux) {
 	// Get a repository
 	// GET /repos/{owner}/{repo}
-	mux.HandleFunc("GET /repos/{owner}/{repo}", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		m.jsonResponse(req.Context(), w, http.StatusOK, r.ghRepository)
 	})
 	// Get commit
 	// GET /repos/octocat/example/commits/{sha}
-	mux.HandleFunc("GET /repos/{owner}/{repo}/commits/{sha}", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/commits/{sha}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		sha := req.PathValue("sha")
 		if sha == "HEAD" { // Special case
 			if r.headCommit == nil {
 				m.notFoundResponse(req.Context(), w)
-				return
 			}
 			m.jsonResponse(req.Context(), w, http.StatusOK, &github.RepositoryCommit{SHA: r.headCommit.ghCommit.SHA, Commit: r.headCommit.ghCommit})
-			return
 		}
 		for _, c := range r.commits {
 			if c.ghCommit.GetSHA() == sha {
@@ -690,24 +674,20 @@ func (m *Mock) registerRepositoriesService(mux *http.ServeMux) {
 					Commit: c.ghCommit,
 				}
 				m.jsonResponse(req.Context(), w, http.StatusOK, commit)
-				return
 			}
 		}
 		m.notFoundResponse(req.Context(), w)
-		return
 	})
 	// Create commit status
 	// POST /repos/octocat/example/statuses/{sha}
-	mux.HandleFunc("POST /repos/{owner}/{repo}/statuses/{sha}", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "POST /repos/{owner}/{repo}/statuses/{sha}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		var status github.RepoStatus
 		if err := json.NewDecoder(req.Body).Decode(&status); err != nil {
 			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
-			return
 		}
 
 		sha := req.PathValue("sha")
@@ -715,7 +695,6 @@ func (m *Mock) registerRepositoriesService(mux *http.ServeMux) {
 		if sha == "HEAD" {
 			if r.headCommit == nil {
 				m.notFoundResponse(req.Context(), w)
-				return
 			}
 			commit = r.headCommit
 		} else {
@@ -728,39 +707,34 @@ func (m *Mock) registerRepositoriesService(mux *http.ServeMux) {
 		}
 		if commit == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		commit.ghStatuses = append(commit.ghStatuses, &status)
 		m.jsonResponse(req.Context(), w, http.StatusOK, status)
-		return
 	})
 }
 
 func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 	// Get an issue
 	// GET /repos/octocat/example/issues/{number}
-	mux.HandleFunc("GET /repos/{owner}/{repo}/issues/{number}", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/issues/{number}", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 
 		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
 			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
-			return
 		}
 		issue := r.GetIssue(num)
 		m.jsonResponse(req.Context(), w, http.StatusOK, issue.ghIssue)
 	})
 	// Get issues
 	// GET /repos/octocat/example/issues
-	mux.HandleFunc("GET /repos/{owner}/{repo}/issues", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/issues", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 
 		var issues []*github.Issue
@@ -771,17 +745,15 @@ func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 	})
 	// Create issue
 	// Post /repos/octocat/example/issues
-	mux.HandleFunc("POST /repos/{owner}/{repo}/issues", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "POST /repos/{owner}/{repo}/issues", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 
 		var reqIssue github.IssueRequest
 		if err := json.NewDecoder(req.Body).Decode(&reqIssue); err != nil {
 			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
-			return
 		}
 
 		issue := &github.Issue{
@@ -791,20 +763,17 @@ func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 		}
 		r.Issues(&Issue{ghIssue: issue})
 		m.jsonResponse(req.Context(), w, http.StatusOK, issue)
-		return
 	})
 	// Create a new comment
 	// POST /repos/octocat/example/issues/1/comments
-	mux.HandleFunc("POST /repos/{owner}/{repo}/issues/{number}/comments", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "POST /repos/{owner}/{repo}/issues/{number}/comments", func(w http.ResponseWriter, req *http.Request) {
 		r := m.findRepository(req)
 		if r == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		num, err := strconv.Atoi(req.PathValue("number"))
 		if err != nil {
 			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
-			return
 		}
 
 		issue := r.GetIssue(num)
@@ -812,12 +781,10 @@ func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 			var comment github.IssueComment
 			if err := json.NewDecoder(req.Body).Decode(&comment); err != nil {
 				m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
-				return
 			}
 
 			issue.comments = append(issue.comments, &comment)
 			m.jsonResponse(req.Context(), w, http.StatusOK, comment)
-			return
 		}
 
 		pr := r.GetPullRequest(num)
@@ -825,29 +792,25 @@ func (m *Mock) registerIssuesService(mux *http.ServeMux) {
 			var comment github.IssueComment
 			if err := json.NewDecoder(req.Body).Decode(&comment); err != nil {
 				m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
-				return
 			}
 
 			pr.comments = append(pr.comments, &github.PullRequestComment{
 				Body: comment.Body,
 			})
 			m.jsonResponse(req.Context(), w, http.StatusOK, comment)
-			return
 		}
 
 		m.notFoundResponse(req.Context(), w)
-		return
 	})
 }
 
 func (m *Mock) registerUsersService(mux *http.ServeMux) {
 	// Get a user
 	// GET /users/{username}
-	mux.HandleFunc("GET /users/{username}", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /users/{username}", func(w http.ResponseWriter, req *http.Request) {
 		u := m.findUser(req)
 		if u == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		m.jsonResponse(req.Context(), w, http.StatusOK, u.ghUser)
 	})
@@ -856,21 +819,19 @@ func (m *Mock) registerUsersService(mux *http.ServeMux) {
 func (m *Mock) registerTeamsService(mux *http.ServeMux) {
 	// Get a team
 	// GET /orgs/{org}/teams/{team_slug}
-	mux.HandleFunc("GET /orgs/{org}/teams/{team_slug}", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /orgs/{org}/teams/{team_slug}", func(w http.ResponseWriter, req *http.Request) {
 		team := m.findTeam(req)
 		if team == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		m.jsonResponse(req.Context(), w, http.StatusOK, team.ghTeam)
 	})
 	// Get team members by slug
 	// GET /orgs/{org}/teams/{team_slug}/members
-	mux.HandleFunc("GET /orgs/{org}/teams/{team_slug}/members", func(w http.ResponseWriter, req *http.Request) {
+	m.registerHandleFunc(mux, "GET /orgs/{org}/teams/{team_slug}/members", func(w http.ResponseWriter, req *http.Request) {
 		team := m.findTeam(req)
 		if team == nil {
 			m.notFoundResponse(req.Context(), w)
-			return
 		}
 		var users []*github.User
 		for _, u := range m.users {
@@ -909,6 +870,8 @@ func (m *Mock) findTeam(req *http.Request) *Team {
 	return nil
 }
 
+var escape = errors.New("escape")
+
 func (m *Mock) notFoundResponse(ctx context.Context, w http.ResponseWriter) {
 	m.errResponse(ctx, w, http.StatusNotFound, "Not found")
 }
@@ -927,6 +890,7 @@ func (m *Mock) jsonResponse(ctx context.Context, w http.ResponseWriter, status i
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		m.Logger.ErrorContext(ctx, "failed to encode response", slog.Any("err", err))
 	}
+	panic(escape)
 }
 
 func (m *Mock) jsonWithPaginationResponse(ctx context.Context, w http.ResponseWriter, req *http.Request, status int, data any) {
