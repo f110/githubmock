@@ -12,22 +12,37 @@ import (
 
 func TestMock(t *testing.T) {
 	t.Run("PullRequestService", func(t *testing.T) {
-		t.Run("Get", func(t *testing.T) {
-			m := NewMock()
-			repo := m.Repository("f110/gh-test")
-			repo.PullRequests(
-				NewPullRequest().
-					Number(1).
-					Title(t.Name()).
-					Body("PR description").
-					Base("master").
-					Head(nil, "feature-1").
-					Mergeable().
-					CreatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)).
-					UpdatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)),
-			)
-			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
+		m := NewMock()
+		repo := m.Repository("f110/gh-test")
+		repo.PullRequests(
+			NewPullRequest().
+				Number(1).
+				Title(t.Name()).
+				State(PullRequestStateOpen).
+				Body("PR description").
+				Base("master").
+				Head(nil, "feature-1").
+				Mergeable().
+				CreatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)).
+				UpdatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)),
+			NewPullRequest().
+				Number(2).
+				Title("PR 2").
+				State(PullRequestStateClosed).
+				Base("master").
+				Reviews(
+					NewReview().
+						Author("user1").
+						Body("LGTM").
+						State(ReviewStateApproved),
+				).
+				CreatedAt(time.Date(2023, 1, 1, 1, 1, 1, 0, time.UTC)).
+				UpdatedAt(time.Date(2023, 1, 1, 1, 1, 1, 0, time.UTC)),
+		)
 
+		ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
+
+		t.Run("Get", func(t *testing.T) {
 			pr, _, err := ghClient.PullRequests.Get(t.Context(), "f110", "gh-test", 1)
 			require.NoError(t, err)
 			assert.Equal(t, 1, pr.GetNumber())
@@ -40,28 +55,6 @@ func TestMock(t *testing.T) {
 		})
 
 		t.Run("List", func(t *testing.T) {
-			m := NewMock()
-			repo := m.Repository("f110/gh-test")
-			repo.PullRequests(
-				NewPullRequest().
-					Number(1).
-					Title(t.Name()).
-					State(PullRequestStateOpen).
-					Body("PR description").
-					Base("master").
-					Head(nil, "feature-1").
-					CreatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)).
-					UpdatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)),
-				NewPullRequest().
-					Number(2).
-					Title("PR 2").
-					State(PullRequestStateClosed).
-					Base("master").
-					CreatedAt(time.Date(2023, 1, 1, 1, 1, 1, 0, time.UTC)).
-					UpdatedAt(time.Date(2023, 1, 1, 1, 1, 1, 0, time.UTC)),
-			)
-			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
-
 			prs, _, err := ghClient.PullRequests.List(t.Context(), "f110", "gh-test", &github.PullRequestListOptions{State: "open"})
 			require.NoError(t, err)
 			assert.Len(t, prs, 1)
@@ -89,29 +82,22 @@ func TestMock(t *testing.T) {
 		})
 
 		t.Run("Create", func(t *testing.T) {
-			m := NewMock()
-			m.Repository("f110/gh-test")
-			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
-
 			pr, _, err := ghClient.PullRequests.Create(t.Context(), "f110", "gh-test", &github.NewPullRequest{})
 			require.NoError(t, err)
-			assert.Equal(t, 1, pr.GetNumber())
+			assert.Equal(t, 3, pr.GetNumber())
 		})
 
 		t.Run("Edit", func(t *testing.T) {
-			m := NewMock()
-			repo := m.Repository("f110/gh-test")
 			repo.PullRequests(
 				NewPullRequest().
-					Number(1).
+					Number(4).
 					Title(t.Name()).
 					Body("PR description").
 					Base("master").
 					Head(nil, "feature-1"),
 			)
-			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
 
-			pr, _, err := ghClient.PullRequests.Edit(t.Context(), "f110", "gh-test", 1, &github.PullRequest{
+			pr, _, err := ghClient.PullRequests.Edit(t.Context(), "f110", "gh-test", 4, &github.PullRequest{
 				Base: &github.PullRequestBranch{Ref: new("main")},
 			})
 			require.NoError(t, err)
@@ -120,15 +106,6 @@ func TestMock(t *testing.T) {
 		})
 
 		t.Run("CreateComment", func(t *testing.T) {
-			m := NewMock()
-			repo := m.Repository("f110/gh-test")
-			repo.PullRequests(
-				NewPullRequest().
-					Number(1).
-					Title(t.Name()),
-			)
-			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
-
 			comment, _, err := ghClient.PullRequests.CreateComment(t.Context(), "f110", "gh-test", 1, &github.PullRequestComment{
 				Body: new("Comment"),
 			})
@@ -140,22 +117,7 @@ func TestMock(t *testing.T) {
 		})
 
 		t.Run("ListReviews", func(t *testing.T) {
-			m := NewMock()
-			repo := m.Repository("f110/gh-test")
-			repo.PullRequests(
-				NewPullRequest().
-					Number(1).
-					Title(t.Name()).
-					Reviews(
-						NewReview().
-							Author("user1").
-							Body("LGTM").
-							State(ReviewStateApproved),
-					),
-			)
-			ghClient := github.NewClient(&http.Client{Transport: m.Transport()})
-
-			reviews, _, err := ghClient.PullRequests.ListReviews(t.Context(), "f110", "gh-test", 1, nil)
+			reviews, _, err := ghClient.PullRequests.ListReviews(t.Context(), "f110", "gh-test", 2, nil)
 			require.NoError(t, err)
 			assert.Len(t, reviews, 1)
 		})
