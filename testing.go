@@ -310,6 +310,7 @@ func (m *Mock) registerMultiplexer(mux *http.ServeMux) {
 	m.registerGitService(mux)
 	m.registerUsersService(mux)
 	m.registerTeamsService(mux)
+	m.registerGraphQLService(mux)
 	m.registerHandleFunc(mux, "/", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotImplemented)
 	})

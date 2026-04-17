@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/go-git/go-git/v5 v5.16.5
 	github.com/google/go-github/v83 v83.0.0
+	github.com/graph-gophers/graphql-go v1.9.0
 	github.com/stretchr/testify v1.11.1
 )
 
