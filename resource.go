@@ -243,14 +243,22 @@ func (pr *PullRequest) Base(ref string) *PullRequest {
 	return pr
 }
 
-func (pr *PullRequest) Head(repo *Repository, ref string) *PullRequest {
-	if ref == "" {
+func (pr *PullRequest) Head(repo *Repository, ref, sha string) *PullRequest {
+	if ref == "" && sha == "" {
 		return pr
 	}
 	if repo != nil {
 		pr.headRepo = repo
 	}
-	pr.ghPullRequest.Head = &github.PullRequestBranch{Ref: new(ref)}
+	if pr.ghPullRequest.Head == nil {
+		pr.ghPullRequest.Head = &github.PullRequestBranch{}
+	}
+	if ref != "" {
+		pr.ghPullRequest.Head.Ref = new(ref)
+	}
+	if sha != "" {
+		pr.ghPullRequest.Head.SHA = new(sha)
+	}
 	return pr
 }
 

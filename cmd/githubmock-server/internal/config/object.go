@@ -59,6 +59,7 @@ type PullRequest struct {
 type Head struct {
 	Repo string `yaml:"repo"`
 	Ref  string `yaml:"ref"`
+	SHA  string `yaml:"sha,omitempty"`
 }
 
 type Comment struct {

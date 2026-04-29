@@ -106,7 +106,7 @@ func newMock(teams []*config.Team, users []*config.User, repos []*config.Reposit
 				CreatedAt(pr.CreatedAt).
 				UpdatedAt(pr.UpdatedAt)
 			if pr.Head != nil {
-				b.Head(m[pr.Head.Repo], pr.Head.Ref)
+				b.Head(m[pr.Head.Repo], pr.Head.Ref, pr.Head.SHA)
 			}
 			if pr.Mergeable {
 				b.Mergeable()

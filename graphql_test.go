@@ -100,7 +100,7 @@ func TestGraphQL(t *testing.T) {
 				Author(user).
 				State(PullRequestStateOpen).
 				Base("main").
-				Head(nil, "fix-branch").
+				Head(nil, "fix-branch", "").
 				Mergeable().
 				CreatedAt(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)).
 				UpdatedAt(time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)),
@@ -110,7 +110,7 @@ func TestGraphQL(t *testing.T) {
 				State(PullRequestStateClosed).
 				Merged().
 				Base("main").
-				Head(nil, "feature-branch").
+				Head(nil, "feature-branch", "").
 				CreatedAt(time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)).
 				UpdatedAt(time.Date(2024, 2, 2, 0, 0, 0, 0, time.UTC)),
 			NewPullRequest().
@@ -118,7 +118,7 @@ func TestGraphQL(t *testing.T) {
 				Title("WIP").
 				State(PullRequestStateOpen).
 				Base("main").
-				Head(nil, "wip").
+				Head(nil, "wip", "").
 				CreatedAt(time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)).
 				UpdatedAt(time.Date(2024, 3, 2, 0, 0, 0, 0, time.UTC)),
 		)
@@ -462,7 +462,7 @@ func TestGraphQL(t *testing.T) {
 				Title("PR with reviews").
 				State(PullRequestStateOpen).
 				Base("main").
-				Head(nil, "feature").
+				Head(nil, "feature", "").
 				Reviews(
 					NewReview().
 						Author("reviewer1").
@@ -564,8 +564,8 @@ func TestGraphQL(t *testing.T) {
 		m := NewMock()
 		repo := m.Repository("f110/gh-test")
 		repo.PullRequests(
-			NewPullRequest().Number(1).Title("PR 1").State(PullRequestStateOpen).Base("main").Head(nil, "b1"),
-			NewPullRequest().Number(2).Title("PR 2").State(PullRequestStateOpen).Base("main").Head(nil, "b2"),
+			NewPullRequest().Number(1).Title("PR 1").State(PullRequestStateOpen).Base("main").Head(nil, "b1", ""),
+			NewPullRequest().Number(2).Title("PR 2").State(PullRequestStateOpen).Base("main").Head(nil, "b2", ""),
 		)
 
 		resp := execGraphQL(t, m, `{
@@ -605,7 +605,7 @@ func TestGraphQL(t *testing.T) {
 		repo := m.Repository("f110/gh-test")
 		repo.DefaultBranch("main")
 		repo.PullRequests(
-			NewPullRequest().Number(1).Title("Test PR").State(PullRequestStateOpen).Base("main").Head(nil, "feature"),
+			NewPullRequest().Number(1).Title("Test PR").State(PullRequestStateOpen).Base("main").Head(nil, "feature", ""),
 		)
 
 		client := &http.Client{Transport: m.Transport()}

@@ -21,7 +21,7 @@ func TestMock(t *testing.T) {
 				State(PullRequestStateOpen).
 				Body("PR description").
 				Base("master").
-				Head(nil, "feature-1").
+				Head(nil, "feature-1", "").
 				Mergeable().
 				CreatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)).
 				UpdatedAt(time.Date(2022, 1, 1, 1, 1, 1, 0, time.UTC)),
@@ -94,7 +94,7 @@ func TestMock(t *testing.T) {
 					Title(t.Name()).
 					Body("PR description").
 					Base("master").
-					Head(nil, "feature-1"),
+					Head(nil, "feature-1", ""),
 			)
 
 			pr, _, err := ghClient.PullRequests.Edit(t.Context(), "f110", "gh-test", 4, &github.PullRequest{
