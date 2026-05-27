@@ -29,6 +29,7 @@ go_test(
     srcs = [
         "graphql_test.go",
         "testing_test.go",
+        "webhook_test.go",
     ],
     embed = [":githubmock"],
     deps = [

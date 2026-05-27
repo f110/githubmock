@@ -31,12 +31,19 @@ type Team struct {
 	Name         string `yaml:"name,omitempty"`
 }
 
+type Webhook struct {
+	URL    string   `yaml:"url"`
+	Secret string   `yaml:"secret,omitempty"`
+	Events []string `yaml:"events,omitempty"`
+}
+
 type Repository struct {
 	Name          string         `yaml:"name"`
 	PullRequests  []*PullRequest `yaml:"pull_requests,omitempty"`
 	Issues        []*Issue       `yaml:"issues,omitempty"`
 	Tags          []*Tag         `yaml:"tags,omitempty"`
 	Commits       []*Commit      `yaml:"commits,omitempty"`
+	Webhooks      []*Webhook     `yaml:"webhooks,omitempty"`
 	DefaultBranch string         `yaml:"default_branch,omitempty"`
 }
 

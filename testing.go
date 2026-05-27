@@ -1,13 +1,16 @@
 package githubmock
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -18,11 +21,18 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/google/go-github/v83/github"
 	"github.com/stretchr/testify/assert"
 )
+
+type WebhookDelivery struct {
+	URL        string
+	StatusCode int
+	Err        error
+}
 
 type Repository struct {
 	mu           sync.Mutex
@@ -30,15 +40,56 @@ type Repository struct {
 	issues       []*Issue
 	tags         []*Tag
 	commits      []*Commit
+	webhooks     []*Webhook
 
 	headCommit *Commit
 	rootCommit *Commit
 
 	ghRepository *github.Repository
+
+	logger *slog.Logger
 }
 
 func newRepository() *Repository {
 	return &Repository{ghRepository: &github.Repository{}}
+}
+
+func (r *Repository) FullName() string {
+	return r.ghRepository.GetFullName()
+}
+
+func (r *Repository) GetCommits() []*Commit {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*Commit, len(r.commits))
+	copy(out, r.commits)
+	return out
+}
+
+func (r *Repository) GetCommit(sha string) *Commit {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.commits {
+		if c.ghCommit.GetSHA() == sha {
+			return c
+		}
+	}
+	return nil
+}
+
+func (r *Repository) Webhook(w *Webhook) *Webhook {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.webhooks = append(r.webhooks, w)
+	return w
+}
+
+func (r *Repository) Webhooks() []*Webhook {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*Webhook, len(r.webhooks))
+	copy(out, r.webhooks)
+	return out
 }
 
 func (r *Repository) AssertPullRequest(t *testing.T, number int) *PullRequest {
@@ -211,6 +262,106 @@ func (r *Repository) nextIndex() int {
 	return lastIndex + 1
 }
 
+func (r *Repository) SendWebhook(ctx context.Context, event string, payload any) []*WebhookDelivery {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return []*WebhookDelivery{{Err: err}}
+	}
+
+	var deliveries []*WebhookDelivery
+	for _, w := range r.Webhooks() {
+		if !w.accepts(event) {
+			continue
+		}
+		deliveries = append(deliveries, r.deliverWebhook(ctx, w, event, body))
+	}
+	return deliveries
+}
+
+func (r *Repository) deliverWebhook(ctx context.Context, w *Webhook, event string, body []byte) *WebhookDelivery {
+	d := &WebhookDelivery{URL: w.url}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.url, bytes.NewReader(body))
+	if err != nil {
+		d.Err = err
+		return d
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "githubmock-webhook")
+	req.Header.Set("X-GitHub-Event", event)
+	req.Header.Set("X-GitHub-Delivery", newHash()[:36])
+	if w.secret != "" {
+		mac := hmac.New(sha256.New, []byte(w.secret))
+		mac.Write(body)
+		req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		if r.logger != nil {
+			r.logger.Error("webhook delivery failed", slog.String("url", w.url), slog.Any("err", err))
+		}
+		d.Err = err
+		return d
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	d.StatusCode = resp.StatusCode
+	return d
+}
+
+func (r *Repository) BuildPullRequestEvent(action string, pr *PullRequest, sender *User) *github.PullRequestEvent {
+	if pr == nil {
+		return nil
+	}
+	ev := &github.PullRequestEvent{
+		Action:      &action,
+		Number:      pr.ghPullRequest.Number,
+		PullRequest: pr.ghPullRequest,
+		Repo:        r.ghRepository,
+	}
+	if sender != nil {
+		ev.Sender = sender.ghUser
+	} else if pr.ghPullRequest.User != nil {
+		ev.Sender = pr.ghPullRequest.User
+	}
+	return ev
+}
+
+func (r *Repository) BuildPushEvent(ref string, commit *Commit, sender *User) *github.PushEvent {
+	if commit == nil {
+		return nil
+	}
+	ev := &github.PushEvent{
+		Ref:   &ref,
+		Head:  commit.ghCommit.SHA,
+		After: commit.ghCommit.SHA,
+		Repo: &github.PushEventRepository{
+			Name:     r.ghRepository.Name,
+			FullName: r.ghRepository.FullName,
+			Owner:    r.ghRepository.Owner,
+		},
+		HeadCommit: &github.HeadCommit{
+			ID:        commit.ghCommit.SHA,
+			SHA:       commit.ghCommit.SHA,
+			Timestamp: &github.Timestamp{Time: time.Now()},
+		},
+	}
+	if commit.ghCommit.Tree != nil {
+		ev.HeadCommit.TreeID = commit.ghCommit.Tree.SHA
+	}
+	if sender != nil {
+		ev.Sender = sender.ghUser
+	}
+	if msg := commit.ghCommit.Message; msg != nil {
+		ev.HeadCommit.Message = msg
+	}
+	if before := firstParentSHA(commit); before != "" {
+		ev.Before = &before
+	}
+	return ev
+}
+
 type Mock struct {
 	Logger *slog.Logger
 	Scheme string
@@ -254,6 +405,7 @@ func (m *Mock) Repository(name string) *Repository {
 	r.ghRepository.Name = new(name[strings.Index(name, "/")+1:])
 	r.ghRepository.FullName = new(name)
 	r.ghRepository.Owner = u.ghUser
+	r.logger = m.Logger
 	m.repositories[name] = r
 	return r
 }
@@ -297,6 +449,22 @@ func (m *Mock) Transport() http.RoundTripper {
 	m.RegisterHandler(mux)
 
 	return &transport{handler: mux}
+}
+
+func (m *Mock) Repositories() []*Repository {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*Repository, 0, len(m.repositories))
+	for _, r := range m.repositories {
+		out = append(out, r)
+	}
+	return out
+}
+
+func (m *Mock) LookupRepository(name string) *Repository {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.repositories[name]
 }
 
 func (m *Mock) RegisterHandler(mux *http.ServeMux) {
@@ -978,4 +1146,11 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	recoder := httptest.NewRecorder()
 	t.handler.ServeHTTP(recoder, req)
 	return recoder.Result(), nil
+}
+
+func firstParentSHA(c *Commit) string {
+	for _, p := range c.ghCommit.Parents {
+		return p.GetSHA()
+	}
+	return ""
 }

@@ -19,3 +19,9 @@ pull_requests:
 issues:
   - number: 2
     title: Bug
+webhooks:
+  - url: http://127.0.0.1:8080/webhook
+    secret: my-secret
+    events:
+      - pull_request
+      - push

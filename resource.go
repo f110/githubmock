@@ -1,6 +1,7 @@
 package githubmock
 
 import (
+	"slices"
 	"strings"
 	"time"
 
@@ -94,6 +95,10 @@ func (c *Commit) SHA(v string) *Commit {
 	}
 	c.ghCommit.SHA = new(v)
 	return c
+}
+
+func (c *Commit) GetSHA() string {
+	return c.ghCommit.GetSHA()
 }
 
 func (c *Commit) Parents(parents ...*Commit) *Commit {
@@ -203,12 +208,20 @@ func (pr *PullRequest) Number(v int) *PullRequest {
 	return pr
 }
 
+func (pr *PullRequest) GetNumber() int {
+	return pr.ghPullRequest.GetNumber()
+}
+
 func (pr *PullRequest) Title(v string) *PullRequest {
 	if v == "" {
 		return pr
 	}
 	pr.ghPullRequest.Title = new(v)
 	return pr
+}
+
+func (pr *PullRequest) GetTitle() string {
+	return pr.ghPullRequest.GetTitle()
 }
 
 func (pr *PullRequest) Body(v string) *PullRequest {
@@ -233,6 +246,10 @@ func (pr *PullRequest) State(v PullRequestState) *PullRequest {
 	}
 	pr.ghPullRequest.State = new(string(v))
 	return pr
+}
+
+func (pr *PullRequest) GetState() string {
+	return pr.ghPullRequest.GetState()
 }
 
 func (pr *PullRequest) Base(ref string) *PullRequest {
@@ -499,4 +516,44 @@ func (r *Review) SubmittedAt(t time.Time) *Review {
 	}
 	r.ghReview.SubmittedAt = &github.Timestamp{Time: t}
 	return r
+}
+
+type Webhook struct {
+	url    string
+	secret string
+	events []string
+}
+
+func NewWebhook() *Webhook {
+	return &Webhook{}
+}
+
+func (w *Webhook) URL(v string) *Webhook {
+	w.url = v
+	return w
+}
+
+func (w *Webhook) Secret(v string) *Webhook {
+	w.secret = v
+	return w
+}
+
+func (w *Webhook) Events(events ...string) *Webhook {
+	w.events = append(w.events, events...)
+	return w
+}
+
+func (w *Webhook) GetURL() string {
+	return w.url
+}
+
+func (w *Webhook) GetEvents() []string {
+	return w.events
+}
+
+func (w *Webhook) accepts(event string) bool {
+	if len(w.events) == 0 {
+		return true
+	}
+	return slices.Contains(w.events, event) || slices.Contains(w.events, "*")
 }

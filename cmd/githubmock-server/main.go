@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go.f110.dev/githubmock"
+	"go.f110.dev/githubmock/cmd/githubmock-server/internal/adminui"
 	"go.f110.dev/githubmock/cmd/githubmock-server/internal/config"
 )
 
@@ -48,11 +49,13 @@ func main() {
 
 	mux := http.NewServeMux()
 	mock.RegisterHandler(mux)
+	adminui.Register(mux, mock)
 	svr := &http.Server{
 		Addr:    *listen,
 		Handler: accessLogWrapper(mux),
 	}
 	fmt.Printf("Listening on %s\n", *listen)
+	fmt.Printf("Admin UI: http://%s:%d/_admin/\n", mock.Host, mock.Port)
 	if err := svr.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
@@ -84,6 +87,10 @@ func newMock(teams []*config.Team, users []*config.User, repos []*config.Reposit
 
 	for _, confRepo := range repos {
 		repo := m[confRepo.Name]
+
+		for _, w := range confRepo.Webhooks {
+			repo.Webhook(githubmock.NewWebhook().URL(w.URL).Secret(w.Secret).Events(w.Events...))
+		}
 
 		for _, pr := range confRepo.PullRequests {
 			comments := make([]*githubmock.PullRequestComment, 0, len(pr.Comments))

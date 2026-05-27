@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "adminui",
+    srcs = ["adminui.go"],
+    embedsrcs = [
+        "static/app.js",
+        "static/index.html",
+    ],
+    importpath = "go.f110.dev/githubmock/cmd/githubmock-server/internal/adminui",
+    visibility = ["//cmd/githubmock-server:__subpackages__"],
+    deps = ["//:githubmock"],
+)
