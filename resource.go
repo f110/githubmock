@@ -102,6 +102,7 @@ func (c *Commit) GetSHA() string {
 }
 
 func (c *Commit) Parents(parents ...*Commit) *Commit {
+	c.parents = append(c.parents, parents...)
 	for _, p := range parents {
 		c.ghCommit.Parents = append(c.ghCommit.Parents, p.ghCommit)
 	}

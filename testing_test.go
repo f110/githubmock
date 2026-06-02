@@ -202,6 +202,20 @@ func TestMock(t *testing.T) {
 		})
 	})
 
+	t.Run("MultipleCommitsWithParents", func(t *testing.T) {
+		m := NewMock()
+		repo := m.Repository("f110/gh-test")
+		root := NewCommit().SHA("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").
+			Files(&File{Name: "README.md", Body: []byte("v1")})
+		require.NoError(t, repo.Commits(root))
+
+		child := NewCommit().SHA("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").
+			Parents(root).
+			IsHead().
+			Files(&File{Name: "README.md", Body: []byte("v2")})
+		require.NoError(t, repo.Commits(child))
+	})
+
 	t.Run("RepositoriesService", func(t *testing.T) {
 		m := NewMock()
 		repo := m.Repository("f110/gh-test")
