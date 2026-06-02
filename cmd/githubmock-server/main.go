@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"go.f110.dev/githubmock"
@@ -18,21 +20,12 @@ import (
 var (
 	listen    = flag.String("listen", ":5620", "Listen address")
 	githubURL = flag.String("github-url", "https://github.com", "Base URL used for repository.html_url in webhook payloads")
+	watch     = flag.Bool("watch", false, "Watch the given configuration files and reload on change")
 )
 
 func main() {
 	flag.Parse()
-
-	teams, users, repos, err := config.Load(flag.Args()...)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
-		os.Exit(1)
-	}
-	mock, err := newMock(teams, users, repos, *githubURL)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create mock: %v\n", err)
-		os.Exit(1)
-	}
+	files := flag.Args()
 
 	_, p, err := net.SplitHostPort(*listen)
 	if err != nil {
@@ -44,22 +37,99 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to parse port: %v\n", err)
 		os.Exit(1)
 	}
-	mock.Scheme = "http"
-	mock.Host = "localhost"
-	mock.Port = port
 
-	mux := http.NewServeMux()
-	mock.RegisterHandler(mux)
-	adminui.Register(mux, mock)
+	build := func() (http.Handler, error) {
+		teams, users, repos, err := config.Load(files...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load config: %w", err)
+		}
+		mock, err := newMock(teams, users, repos, *githubURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create mock: %w", err)
+		}
+		mock.Scheme = "http"
+		mock.Host = "localhost"
+		mock.Port = port
+
+		mux := http.NewServeMux()
+		mock.RegisterHandler(mux)
+		adminui.Register(mux, mock)
+		return mux, nil
+	}
+
+	handler, err := build()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	rh := &reloadableHandler{}
+	rh.Store(handler)
+
+	if *watch && len(files) > 0 {
+		go watchFiles(context.Background(), files, 1*time.Second, func() {
+			h, err := build()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to reload config: %v\n", err)
+				return
+			}
+			rh.Store(h)
+			fmt.Fprintln(os.Stdout, "Configuration reloaded")
+		})
+	}
+
 	svr := &http.Server{
 		Addr:    *listen,
-		Handler: accessLogWrapper(mux),
+		Handler: accessLogWrapper(rh),
 	}
 	fmt.Printf("Listening on %s\n", *listen)
-	fmt.Printf("Admin UI: http://%s:%d/_admin/\n", mock.Host, mock.Port)
+	fmt.Printf("Admin UI: http://localhost:%d/_admin/\n", port)
 	if err := svr.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
+	}
+}
+
+type reloadableHandler struct {
+	h atomic.Pointer[http.Handler]
+}
+
+func (rh *reloadableHandler) Store(h http.Handler) {
+	rh.h.Store(&h)
+}
+
+func (rh *reloadableHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	(*rh.h.Load()).ServeHTTP(w, r)
+}
+
+func watchFiles(ctx context.Context, files []string, interval time.Duration, onChange func()) {
+	mtimes := make(map[string]time.Time, len(files))
+	for _, f := range files {
+		if fi, err := os.Stat(f); err == nil {
+			mtimes[f] = fi.ModTime()
+		}
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			changed := false
+			for _, f := range files {
+				fi, err := os.Stat(f)
+				if err != nil {
+					continue
+				}
+				if prev, ok := mtimes[f]; !ok || !prev.Equal(fi.ModTime()) {
+					mtimes[f] = fi.ModTime()
+					changed = true
+				}
+			}
+			if changed {
+				onChange()
+			}
+		}
 	}
 }
 
