@@ -16,7 +16,8 @@ import (
 )
 
 var (
-	listen = flag.String("listen", ":5620", "Listen address")
+	listen    = flag.String("listen", ":5620", "Listen address")
+	githubURL = flag.String("github-url", "https://github.com", "Base URL used for repository.html_url in webhook payloads")
 )
 
 func main() {
@@ -27,7 +28,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		os.Exit(1)
 	}
-	mock, err := newMock(teams, users, repos)
+	mock, err := newMock(teams, users, repos, *githubURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create mock: %v\n", err)
 		os.Exit(1)
@@ -62,8 +63,11 @@ func main() {
 	}
 }
 
-func newMock(teams []*config.Team, users []*config.User, repos []*config.Repository) (*githubmock.Mock, error) {
+func newMock(teams []*config.Team, users []*config.User, repos []*config.Repository, githubURL string) (*githubmock.Mock, error) {
 	mock := githubmock.NewMock()
+	if githubURL != "" {
+		mock.GitHubURL = githubURL
+	}
 	for _, t := range teams {
 		mock.
 			Team(fmt.Sprintf("%s/%s", t.Organization, t.Slug)).

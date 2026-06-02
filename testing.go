@@ -340,6 +340,7 @@ func (r *Repository) BuildPushEvent(ref string, commit *Commit, sender *User) *g
 			Name:     r.ghRepository.Name,
 			FullName: r.ghRepository.FullName,
 			Owner:    r.ghRepository.Owner,
+			HTMLURL:  r.ghRepository.HTMLURL,
 		},
 		HeadCommit: &github.HeadCommit{
 			ID:        commit.ghCommit.SHA,
@@ -363,10 +364,11 @@ func (r *Repository) BuildPushEvent(ref string, commit *Commit, sender *User) *g
 }
 
 type Mock struct {
-	Logger *slog.Logger
-	Scheme string
-	Host   string
-	Port   int
+	Logger    *slog.Logger
+	Scheme    string
+	Host      string
+	Port      int
+	GitHubURL string
 
 	mu           sync.Mutex
 	repositories map[string]*Repository
@@ -377,6 +379,7 @@ type Mock struct {
 func NewMock() *Mock {
 	return &Mock{
 		Logger:       slog.New(slog.DiscardHandler),
+		GitHubURL:    "https://github.com",
 		repositories: make(map[string]*Repository),
 		users:        make(map[string]*User),
 		teams:        make(map[string]*Team),
@@ -405,6 +408,7 @@ func (m *Mock) Repository(name string) *Repository {
 	r.ghRepository.Name = new(name[strings.Index(name, "/")+1:])
 	r.ghRepository.FullName = new(name)
 	r.ghRepository.Owner = u.ghUser
+	r.ghRepository.HTMLURL = new(strings.TrimRight(m.GitHubURL, "/") + "/" + name)
 	r.logger = m.Logger
 	m.repositories[name] = r
 	return r
