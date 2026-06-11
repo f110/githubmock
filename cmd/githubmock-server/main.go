@@ -19,6 +19,8 @@ import (
 
 var (
 	listen    = flag.String("listen", ":5620", "Listen address")
+	gitListen = flag.String("git-listen", ":5621", "Listen address for the git smart HTTP protocol server")
+	enableGit = flag.Bool("git", true, "Enable the git smart HTTP protocol server (set -git=false to disable)")
 	githubURL = flag.String("github-url", "https://github.com", "Base URL used for repository.html_url in webhook payloads")
 	watch     = flag.Bool("watch", false, "Watch the given configuration files and reload on change")
 )
@@ -38,14 +40,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	build := func() (http.Handler, error) {
+	build := func() (api, git http.Handler, err error) {
 		teams, users, repos, err := config.Load(files...)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load config: %w", err)
+			return nil, nil, fmt.Errorf("failed to load config: %w", err)
 		}
 		mock, err := newMock(teams, users, repos, *githubURL)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create mock: %w", err)
+			return nil, nil, fmt.Errorf("failed to create mock: %w", err)
 		}
 		mock.Scheme = "http"
 		mock.Host = "localhost"
@@ -54,27 +56,44 @@ func main() {
 		mux := http.NewServeMux()
 		mock.RegisterHandler(mux)
 		adminui.Register(mux, mock)
-		return mux, nil
+		return mux, mock.GitHTTPHandler(), nil
 	}
 
-	handler, err := build()
+	apiHandler, gitHandler, err := build()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 	rh := &reloadableHandler{}
-	rh.Store(handler)
+	rh.Store(apiHandler)
+	gitRH := &reloadableHandler{}
+	gitRH.Store(gitHandler)
 
 	if *watch && len(files) > 0 {
 		go watchFiles(context.Background(), files, 1*time.Second, func() {
-			h, err := build()
+			api, git, err := build()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to reload config: %v\n", err)
 				return
 			}
-			rh.Store(h)
+			rh.Store(api)
+			gitRH.Store(git)
 			fmt.Fprintln(os.Stdout, "Configuration reloaded")
 		})
+	}
+
+	if *enableGit {
+		gitSvr := &http.Server{
+			Addr:    *gitListen,
+			Handler: accessLogWrapper(gitRH),
+		}
+		go func() {
+			fmt.Printf("Git smart HTTP listening on %s\n", *gitListen)
+			if err := gitSvr.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fmt.Fprintf(os.Stderr, "%v\n", err)
+				os.Exit(1)
+			}
+		}()
 	}
 
 	svr := &http.Server{
