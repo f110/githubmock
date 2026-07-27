@@ -22,6 +22,7 @@ var (
 	gitListen = flag.String("git-listen", ":5621", "Listen address for the git smart HTTP protocol server")
 	enableGit = flag.Bool("git", true, "Enable the git smart HTTP protocol server (set -git=false to disable)")
 	githubURL = flag.String("github-url", "https://github.com", "Base URL used for repository.html_url in webhook payloads")
+	gitURL    = flag.String("git-url", "", "Base URL used for repository.clone_url in webhook payloads. Defaults to -github-url when empty.")
 	watch     = flag.Bool("watch", false, "Watch the given configuration files and reload on change")
 )
 
@@ -45,7 +46,7 @@ func main() {
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to load config: %w", err)
 		}
-		mock, err := newMock(teams, users, repos, *githubURL)
+		mock, err := newMock(teams, users, repos, *githubURL, *gitURL)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to create mock: %w", err)
 		}
@@ -152,11 +153,12 @@ func watchFiles(ctx context.Context, files []string, interval time.Duration, onC
 	}
 }
 
-func newMock(teams []*config.Team, users []*config.User, repos []*config.Repository, githubURL string) (*githubmock.Mock, error) {
+func newMock(teams []*config.Team, users []*config.User, repos []*config.Repository, githubURL, gitURL string) (*githubmock.Mock, error) {
 	mock := githubmock.NewMock()
 	if githubURL != "" {
 		mock.GitHubURL = githubURL
 	}
+	mock.GitURL = gitURL
 	for _, t := range teams {
 		mock.
 			Team(fmt.Sprintf("%s/%s", t.Organization, t.Slug)).

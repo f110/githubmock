@@ -341,6 +341,7 @@ func (r *Repository) BuildPushEvent(ref string, commit *Commit, sender *User) *g
 			FullName:      r.ghRepository.FullName,
 			Owner:         r.ghRepository.Owner,
 			HTMLURL:       r.ghRepository.HTMLURL,
+			CloneURL:      r.ghRepository.CloneURL,
 			MasterBranch:  r.ghRepository.DefaultBranch,
 			DefaultBranch: r.ghRepository.DefaultBranch,
 		},
@@ -371,6 +372,10 @@ type Mock struct {
 	Host      string
 	Port      int
 	GitHubURL string
+	// GitURL is the base URL for repository.clone_url. When empty, GitHubURL is
+	// used (matching GitHub, where clone_url shares the host with html_url). Set
+	// it when the git server is reachable at a different address than the API.
+	GitURL string
 
 	mu           sync.Mutex
 	repositories map[string]*Repository
@@ -411,6 +416,11 @@ func (m *Mock) Repository(name string) *Repository {
 	r.ghRepository.FullName = new(name)
 	r.ghRepository.Owner = u.ghUser
 	r.ghRepository.HTMLURL = new(strings.TrimRight(m.GitHubURL, "/") + "/" + name)
+	cloneBase := m.GitHubURL
+	if m.GitURL != "" {
+		cloneBase = m.GitURL
+	}
+	r.ghRepository.CloneURL = new(strings.TrimRight(cloneBase, "/") + "/" + name + ".git")
 	r.logger = m.Logger
 	m.repositories[name] = r
 	return r

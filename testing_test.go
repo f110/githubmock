@@ -12,6 +12,7 @@ import (
 
 func TestBuildPushEvent(t *testing.T) {
 	m := NewMock()
+	m.GitURL = "http://127.0.0.1:5621"
 	repo := m.Repository("example/public-app")
 	repo.DefaultBranch("main")
 	commit := NewCommit().
@@ -25,6 +26,7 @@ func TestBuildPushEvent(t *testing.T) {
 
 	assert.Equal(t, "main", ev.GetRepo().GetMasterBranch())
 	assert.Equal(t, "main", ev.GetRepo().GetDefaultBranch())
+	assert.Equal(t, "http://127.0.0.1:5621/example/public-app.git", ev.GetRepo().GetCloneURL())
 }
 
 func TestMock(t *testing.T) {
