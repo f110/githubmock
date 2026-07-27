@@ -337,10 +337,12 @@ func (r *Repository) BuildPushEvent(ref string, commit *Commit, sender *User) *g
 		Head:  commit.ghCommit.SHA,
 		After: commit.ghCommit.SHA,
 		Repo: &github.PushEventRepository{
-			Name:     r.ghRepository.Name,
-			FullName: r.ghRepository.FullName,
-			Owner:    r.ghRepository.Owner,
-			HTMLURL:  r.ghRepository.HTMLURL,
+			Name:          r.ghRepository.Name,
+			FullName:      r.ghRepository.FullName,
+			Owner:         r.ghRepository.Owner,
+			HTMLURL:       r.ghRepository.HTMLURL,
+			MasterBranch:  r.ghRepository.DefaultBranch,
+			DefaultBranch: r.ghRepository.DefaultBranch,
 		},
 		HeadCommit: &github.HeadCommit{
 			ID:        commit.ghCommit.SHA,

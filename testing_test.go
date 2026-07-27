@@ -10,6 +10,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBuildPushEvent(t *testing.T) {
+	m := NewMock()
+	repo := m.Repository("example/public-app")
+	repo.DefaultBranch("main")
+	commit := NewCommit().
+		SHA("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").
+		IsHead().
+		Files(&File{Name: "README.md", Body: []byte("v1")})
+	require.NoError(t, repo.Commits(commit))
+
+	ev := repo.BuildPushEvent("refs/heads/main", commit, nil)
+	require.NotNil(t, ev)
+
+	assert.Equal(t, "main", ev.GetRepo().GetMasterBranch())
+	assert.Equal(t, "main", ev.GetRepo().GetDefaultBranch())
+}
+
 func TestMock(t *testing.T) {
 	t.Run("PullRequestService", func(t *testing.T) {
 		m := NewMock()
