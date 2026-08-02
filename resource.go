@@ -519,6 +519,57 @@ func (r *Review) SubmittedAt(t time.Time) *Review {
 	return r
 }
 
+// Stack represents a pull request stack of the Stacks API.
+type Stack struct {
+	id           int
+	number       int
+	nodeID       string
+	url          string
+	baseRef      string
+	open         bool
+	createdAt    time.Time
+	pullRequests []*PullRequest
+}
+
+func NewStack() *Stack {
+	return &Stack{open: true, createdAt: time.Now()}
+}
+
+func (s *Stack) Number(v int) *Stack {
+	if v <= 0 {
+		return s
+	}
+	s.number = v
+	return s
+}
+
+func (s *Stack) Base(ref string) *Stack {
+	if ref == "" {
+		return s
+	}
+	s.baseRef = ref
+	return s
+}
+
+// PullRequests sets the ordered pull requests of the stack, from the
+// bottom (closest to the base branch) to the top.
+func (s *Stack) PullRequests(prs ...*PullRequest) *Stack {
+	s.pullRequests = append(s.pullRequests, prs...)
+	return s
+}
+
+func (s *Stack) GetNumber() int {
+	return s.number
+}
+
+// GetPullRequests returns the ordered pull requests in the stack, from the
+// bottom to the top.
+func (s *Stack) GetPullRequests() []*PullRequest {
+	out := make([]*PullRequest, len(s.pullRequests))
+	copy(out, s.pullRequests)
+	return out
+}
+
 type Webhook struct {
 	url    string
 	secret string

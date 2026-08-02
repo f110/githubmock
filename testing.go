@@ -41,6 +41,7 @@ type Repository struct {
 	tags         []*Tag
 	commits      []*Commit
 	webhooks     []*Webhook
+	stacks       []*Stack
 
 	headCommit *Commit
 	rootCommit *Commit
@@ -138,6 +139,85 @@ func (r *Repository) GetPullRequests() []*PullRequest {
 	defer r.mu.Unlock()
 
 	return r.pullRequests
+}
+
+func (r *Repository) Stacks(stacks ...*Stack) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, v := range stacks {
+		if v.number == 0 {
+			v.number = r.nextStackIndex()
+		}
+		if v.id == 0 {
+			v.id = v.number
+		}
+		if v.url == "" {
+			v.url = fmt.Sprintf("%s/stacks/%d", r.ghRepository.GetHTMLURL(), v.number)
+		}
+		r.stacks = append(r.stacks, v)
+	}
+}
+
+func (r *Repository) GetStacks() []*Stack {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*Stack, len(r.stacks))
+	copy(out, r.stacks)
+	return out
+}
+
+func (r *Repository) GetStack(number int) *Stack {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, v := range r.stacks {
+		if v.number == number {
+			return v
+		}
+	}
+	return nil
+}
+
+// stackContaining returns the stack that holds the given pull request number,
+// or nil when the pull request is not part of any stack.
+func (r *Repository) stackContaining(prNumber int) *Stack {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, s := range r.stacks {
+		for _, pr := range s.pullRequests {
+			if pr.GetNumber() == prNumber {
+				return s
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Repository) appendToStack(s *Stack, prs []*PullRequest) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s.pullRequests = append(s.pullRequests, prs...)
+}
+
+func (r *Repository) removeStack(number int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stacks := make([]*Stack, 0, len(r.stacks))
+	for _, s := range r.stacks {
+		if s.number != number {
+			stacks = append(stacks, s)
+		}
+	}
+	r.stacks = stacks
+}
+
+func (r *Repository) nextStackIndex() int {
+	var last int
+	for _, v := range r.stacks {
+		if v.number > last {
+			last = v.number
+		}
+	}
+	return last + 1
 }
 
 func (r *Repository) Issues(issues ...*Issue) {
@@ -489,6 +569,7 @@ func (m *Mock) RegisterHandler(mux *http.ServeMux) {
 
 func (m *Mock) registerMultiplexer(mux *http.ServeMux) {
 	m.registerPullRequestService(mux)
+	m.registerStacksService(mux)
 	m.registerIssuesService(mux)
 	m.registerRepositoriesService(mux)
 	m.registerGitService(mux)
@@ -692,6 +773,168 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 		}
 		pr := r.GetPullRequest(num)
 		m.jsonResponse(req.Context(), w, http.StatusOK, pr.reviews)
+	})
+}
+
+type stackResponse struct {
+	ID           int               `json:"id"`
+	Number       int               `json:"number"`
+	NodeID       string            `json:"node_id"`
+	URL          string            `json:"url"`
+	Base         stackBaseResponse `json:"base"`
+	Open         bool              `json:"open"`
+	CreatedAt    string            `json:"created_at"`
+	PullRequests []stackPRResponse `json:"pull_requests"`
+}
+
+type stackBaseResponse struct {
+	Ref string `json:"ref"`
+}
+
+type stackPRResponse struct {
+	Number int    `json:"number"`
+	State  string `json:"state"`
+	Draft  bool   `json:"draft"`
+}
+
+func (s *Stack) toResponse() *stackResponse {
+	prs := make([]stackPRResponse, len(s.pullRequests))
+	for i, pr := range s.pullRequests {
+		state := pr.GetState()
+		if state == "" {
+			state = "open"
+		}
+		prs[i] = stackPRResponse{Number: pr.GetNumber(), State: state, Draft: pr.ghPullRequest.GetDraft()}
+	}
+	return &stackResponse{
+		ID:           s.id,
+		Number:       s.number,
+		NodeID:       s.nodeID,
+		URL:          s.url,
+		Base:         stackBaseResponse{Ref: s.baseRef},
+		Open:         s.open,
+		CreatedAt:    s.createdAt.Format(time.RFC3339),
+		PullRequests: prs,
+	}
+}
+
+type stackRequest struct {
+	PullRequests []int `json:"pull_requests"`
+}
+
+func (m *Mock) registerStacksService(mux *http.ServeMux) {
+	// List stacks
+	// GET /repos/octocat/example/stacks
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/stacks", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		res := make([]*stackResponse, 0)
+		for _, s := range r.GetStacks() {
+			res = append(res, s.toResponse())
+		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, res)
+	})
+	// Create a stack
+	// POST /repos/octocat/example/stacks
+	m.registerHandleFunc(mux, "POST /repos/{owner}/{repo}/stacks", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		var reqBody stackRequest
+		if err := json.NewDecoder(req.Body).Decode(&reqBody); err != nil {
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
+		}
+		if len(reqBody.PullRequests) < 2 {
+			m.errResponse(req.Context(), w, http.StatusUnprocessableEntity, "Stack must contain at least two pull requests")
+		}
+		prs := make([]*PullRequest, 0, len(reqBody.PullRequests))
+		for _, n := range reqBody.PullRequests {
+			if r.stackContaining(n) != nil {
+				m.errResponse(req.Context(), w, http.StatusUnprocessableEntity, fmt.Sprintf("Pull request #%d is already stacked", n))
+			}
+			pr := r.GetPullRequest(n)
+			if pr == nil {
+				m.errResponse(req.Context(), w, http.StatusUnprocessableEntity, fmt.Sprintf("Pull request #%d does not exist", n))
+				return
+			}
+			prs = append(prs, pr)
+		}
+		s := &Stack{pullRequests: prs, open: true, createdAt: time.Now()}
+		r.Stacks(s)
+		m.jsonResponse(req.Context(), w, http.StatusCreated, s.toResponse())
+	})
+	// Get a stack
+	// GET /repos/octocat/example/stacks/1
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/stacks/{number}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		num, err := strconv.Atoi(req.PathValue("number"))
+		if err != nil {
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
+		}
+		s := r.GetStack(num)
+		if s == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, s.toResponse())
+	})
+	// Add pull requests to a stack
+	// POST /repos/octocat/example/stacks/1/add
+	m.registerHandleFunc(mux, "POST /repos/{owner}/{repo}/stacks/{number}/add", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		num, err := strconv.Atoi(req.PathValue("number"))
+		if err != nil {
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
+		}
+		s := r.GetStack(num)
+		if s == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		var reqBody stackRequest
+		if err := json.NewDecoder(req.Body).Decode(&reqBody); err != nil {
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
+		}
+		prs := make([]*PullRequest, 0, len(reqBody.PullRequests))
+		for _, n := range reqBody.PullRequests {
+			if containing := r.stackContaining(n); containing != nil && containing != s {
+				m.errResponse(req.Context(), w, http.StatusUnprocessableEntity, fmt.Sprintf("Pull request #%d is already stacked", n))
+			}
+			pr := r.GetPullRequest(n)
+			if pr == nil {
+				m.errResponse(req.Context(), w, http.StatusUnprocessableEntity, fmt.Sprintf("Pull request #%d does not exist", n))
+				return
+			}
+			prs = append(prs, pr)
+		}
+		r.appendToStack(s, prs)
+		m.jsonResponse(req.Context(), w, http.StatusOK, s.toResponse())
+	})
+	// Remove unmerged pull requests from a stack
+	// POST /repos/octocat/example/stacks/1/unstack
+	m.registerHandleFunc(mux, "POST /repos/{owner}/{repo}/stacks/{number}/unstack", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		num, err := strconv.Atoi(req.PathValue("number"))
+		if err != nil {
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
+		}
+		s := r.GetStack(num)
+		if s == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		// All pull requests are treated as unmerged, so the stack is dissolved.
+		r.removeStack(num)
+		m.noContentResponse(w)
 	})
 }
 
@@ -1059,6 +1302,11 @@ var escape = errors.New("escape")
 
 func (m *Mock) notFoundResponse(ctx context.Context, w http.ResponseWriter) {
 	m.errResponse(ctx, w, http.StatusNotFound, "Not found")
+}
+
+func (m *Mock) noContentResponse(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNoContent)
+	panic(escape)
 }
 
 type errorResponse struct {
