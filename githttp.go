@@ -153,9 +153,17 @@ func (l storerLoader) Load(*gittransport.Endpoint) (storer.Storer, error) {
 	return l.storer, nil
 }
 
+// gitObjectHash holds the git-computed hashes of a commit and its root tree.
+// These are the SHAs the git protocol serves; the API/webhook layer reports the
+// same values (see Repository.Commits).
+type gitObjectHash struct {
+	commit plumbing.Hash
+	tree   plumbing.Hash
+	files  map[string]plumbing.Hash // blob/subtree path -> hash ("" is the root tree)
+}
+
 // buildGitStorer builds an in-memory git repository from the mock data of a
-// Repository. Object hashes are computed by git from the content, so they do
-// not match the (randomly generated) SHAs of the mock commits.
+// Repository, for serving over the git protocol.
 func buildGitStorer(repo *Repository) (storer.Storer, error) {
 	repo.mu.Lock()
 	commits := make([]*Commit, len(repo.commits))
@@ -164,28 +172,38 @@ func buildGitStorer(repo *Repository) (storer.Storer, error) {
 	branch := repo.ghRepository.GetDefaultBranch()
 	repo.mu.Unlock()
 
+	st, _, err := computeGitObjects(commits, headCommit, branch)
+	return st, err
+}
+
+// computeGitObjects builds the git objects for commits and returns the storer
+// plus the git-computed commit/tree hash of each commit. The hashes are the
+// single source of truth for a commit's SHA; Repository.Commits records them on
+// the github.Commit so the API and webhook payloads match what git serves.
+func computeGitObjects(commits []*Commit, headCommit *Commit, branch string) (storer.Storer, map[*Commit]gitObjectHash, error) {
 	st := memory.NewStorage()
 	if len(commits) == 0 {
-		return st, nil
+		return st, nil, nil
 	}
 
 	ordered, err := topologicalCommits(commits)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
+	hashes := make(map[*Commit]gitObjectHash, len(ordered))
 	gitHash := make(map[*Commit]plumbing.Hash, len(ordered))
 	for _, c := range ordered {
-		treeHash, err := writeTree(st, c.files)
+		treeHash, pathHashes, err := writeTree(st, c.files)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		var parents []plumbing.Hash
 		for _, p := range c.parents {
 			h, ok := gitHash[p]
 			if !ok {
-				return nil, fmt.Errorf("githubmock: parent commit is not built yet")
+				return nil, nil, fmt.Errorf("githubmock: parent commit is not built yet")
 			}
 			parents = append(parents, h)
 		}
@@ -201,13 +219,14 @@ func buildGitStorer(repo *Repository) (storer.Storer, error) {
 		}
 		obj := st.NewEncodedObject()
 		if err := commit.Encode(obj); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		h, err := st.SetEncodedObject(obj)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		gitHash[c] = h
+		hashes[c] = gitObjectHash{commit: h, tree: treeHash, files: pathHashes}
 	}
 
 	// The branch points at the tip of the history. Prefer an explicitly marked
@@ -223,12 +242,12 @@ func buildGitStorer(repo *Repository) (storer.Storer, error) {
 	}
 	refName := plumbing.NewBranchReferenceName(branch)
 	if err := st.SetReference(plumbing.NewHashReference(refName, gitHash[tip])); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := st.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, refName)); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return st, nil
+	return st, hashes, nil
 }
 
 // topologicalCommits orders commits so that every parent appears before its
@@ -296,7 +315,7 @@ func (n *treeNode) dir(name string) *treeNode {
 
 // writeTree writes the blobs and tree objects for a commit's files and returns
 // the hash of the root tree.
-func writeTree(st storer.Storer, files []*File) (plumbing.Hash, error) {
+func writeTree(st storer.Storer, files []*File) (plumbing.Hash, map[string]plumbing.Hash, error) {
 	root := newTreeNode()
 	for _, f := range files {
 		if f.mode != fileTypeRegular || f.Name == "" {
@@ -309,10 +328,25 @@ func writeTree(st storer.Storer, files []*File) (plumbing.Hash, error) {
 		}
 		node.files[parts[len(parts)-1]] = f.Body
 	}
-	return writeTreeNode(st, root)
+	// pathHashes maps each blob/subtree path to its git hash (and "" to the root
+	// tree) so callers can record the real SHAs on the File objects.
+	pathHashes := make(map[string]plumbing.Hash)
+	rootHash, err := writeTreeNode(st, root, "", pathHashes)
+	if err != nil {
+		return plumbing.ZeroHash, nil, err
+	}
+	pathHashes[""] = rootHash
+	return rootHash, pathHashes, nil
 }
 
-func writeTreeNode(st storer.Storer, node *treeNode) (plumbing.Hash, error) {
+func joinPath(prefix, name string) string {
+	if prefix == "" {
+		return name
+	}
+	return prefix + "/" + name
+}
+
+func writeTreeNode(st storer.Storer, node *treeNode, prefix string, pathHashes map[string]plumbing.Hash) (plumbing.Hash, error) {
 	var entries []object.TreeEntry
 	for name, body := range node.files {
 		blobHash, err := writeBlob(st, body)
@@ -320,13 +354,15 @@ func writeTreeNode(st storer.Storer, node *treeNode) (plumbing.Hash, error) {
 			return plumbing.ZeroHash, err
 		}
 		entries = append(entries, object.TreeEntry{Name: name, Mode: filemode.Regular, Hash: blobHash})
+		pathHashes[joinPath(prefix, name)] = blobHash
 	}
 	for name, child := range node.dirs {
-		childHash, err := writeTreeNode(st, child)
+		childHash, err := writeTreeNode(st, child, joinPath(prefix, name), pathHashes)
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
 		entries = append(entries, object.TreeEntry{Name: name, Mode: filemode.Dir, Hash: childHash})
+		pathHashes[joinPath(prefix, name)] = childHash
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 

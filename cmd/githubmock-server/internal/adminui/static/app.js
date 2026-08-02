@@ -41,7 +41,7 @@ function refreshDependents() {
     opt.textContent = `#${pr.number} ${pr.title} [${pr.state}]`;
     prSel.appendChild(opt);
   }
-  for (const c of repo.commits || []) {
+  for (const c of [...(repo.commits || [])].reverse()) {
     const opt = document.createElement("option");
     opt.value = c.sha;
     opt.textContent = c.sha.slice(0, 12);

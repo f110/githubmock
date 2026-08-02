@@ -64,9 +64,9 @@ type PullRequest struct {
 }
 
 type Head struct {
-	Repo string `yaml:"repo"`
-	Ref  string `yaml:"ref"`
-	SHA  string `yaml:"sha,omitempty"`
+	Repo   string `yaml:"repo"`
+	Ref    string `yaml:"ref"`
+	Commit string `yaml:"commit,omitempty"` // references a Commit by ID
 }
 
 type Comment struct {
@@ -89,8 +89,11 @@ type Tag struct {
 	Commit string `yaml:"commit,omitempty"`
 }
 
+// Commit is identified within the config by a symbolic ID (not a git SHA); the
+// actual commit SHA is computed by git from the content. Parents, Tag.Commit and
+// Head.Commit reference commits by this ID.
 type Commit struct {
-	SHA      string          `yaml:"sha"`
+	ID       string          `yaml:"id"`
 	Parents  []string        `yaml:"parents,omitempty"`
 	Files    []*File         `yaml:"files,omitempty"`
 	Statuses []*CommitStatus `yaml:"statuses,omitempty"`

@@ -180,6 +180,49 @@ func newMock(teams []*config.Team, users []*config.User, repos []*config.Reposit
 		}
 	}
 
+	// Pass 1: build commits and tags first so their git-computed SHAs are known
+	// before pull request heads (which reference a commit by ID) are resolved.
+	repoCommits := make(map[string]map[string]*githubmock.Commit)
+	for _, confRepo := range repos {
+		repo := m[confRepo.Name]
+
+		commits := make(map[string]*githubmock.Commit)
+		for _, commit := range confRepo.Commits {
+			var files []*githubmock.File
+			for _, file := range commit.Files {
+				files = append(files, &githubmock.File{Name: file.Name, Body: []byte(file.Content)})
+			}
+			var statuses []*githubmock.CommitStatus
+			for _, status := range commit.Statuses {
+				statuses = append(statuses, &githubmock.CommitStatus{State: status.State, Description: status.Description})
+			}
+			commits[commit.ID] = githubmock.NewCommit().Files(files...).Statuses(statuses...)
+		}
+		// Resolve parents (by ID) and add each commit to the mock.
+		for _, confCommit := range confRepo.Commits {
+			commit := commits[confCommit.ID]
+
+			var parents []*githubmock.Commit
+			for _, id := range confCommit.Parents {
+				if _, ok := commits[id]; !ok {
+					return nil, fmt.Errorf("parent commit %s not found", id)
+				}
+				parents = append(parents, commits[id])
+			}
+			commit.Parents(parents...)
+
+			if err := repo.Commits(commit); err != nil {
+				return nil, err
+			}
+		}
+
+		for _, tag := range confRepo.Tags {
+			repo.Tags(githubmock.NewTag().Name(tag.Name).Commit(commits[tag.Commit]))
+		}
+		repoCommits[confRepo.Name] = commits
+	}
+
+	// Pass 2: build webhooks, pull requests and issues.
 	for _, confRepo := range repos {
 		repo := m[confRepo.Name]
 
@@ -208,7 +251,11 @@ func newMock(teams []*config.Team, users []*config.User, repos []*config.Reposit
 				CreatedAt(pr.CreatedAt).
 				UpdatedAt(pr.UpdatedAt)
 			if pr.Head != nil {
-				b.Head(m[pr.Head.Repo], pr.Head.Ref, pr.Head.SHA)
+				var sha string
+				if c, ok := repoCommits[pr.Head.Repo][pr.Head.Commit]; ok {
+					sha = c.GetSHA()
+				}
+				b.Head(m[pr.Head.Repo], pr.Head.Ref, sha)
 			}
 			if pr.Mergeable {
 				b.Mergeable()
@@ -233,46 +280,6 @@ func newMock(teams []*config.Team, users []*config.User, repos []*config.Reposit
 				CreatedAt(issue.CreatedAt).
 				UpdatedAt(issue.UpdatedAt)
 			repo.Issues(b)
-		}
-
-		commits := make(map[string]*githubmock.Commit)
-		for _, commit := range confRepo.Commits {
-			var files []*githubmock.File
-			for _, file := range commit.Files {
-				files = append(files, &githubmock.File{Name: file.Name, Body: []byte(file.Content)})
-			}
-			var statuses []*githubmock.CommitStatus
-			for _, status := range commit.Statuses {
-				statuses = append(statuses, &githubmock.CommitStatus{State: status.State, Description: status.Description})
-			}
-			c := githubmock.NewCommit().
-				SHA(commit.SHA).
-				Files(files...).
-				Statuses(statuses...)
-			commits[commit.SHA] = c
-		}
-		// Resolve parents and add commit to the mock
-		for _, confCommit := range confRepo.Commits {
-			commit := commits[confCommit.SHA]
-
-			var parents []*githubmock.Commit
-			for _, v := range confCommit.Parents {
-				if _, ok := commits[v]; !ok {
-					return nil, fmt.Errorf("parent commit %s not found", v)
-				}
-				parents = append(parents, commits[v])
-			}
-			commit.Parents(parents...)
-
-			if err := repo.Commits(commit); err != nil {
-				return nil, err
-			}
-		}
-
-		for _, tag := range confRepo.Tags {
-			refCommit := commits[tag.Commit]
-			t := githubmock.NewTag().Name(tag.Name).Commit(refCommit)
-			repo.Tags(t)
 		}
 	}
 	return mock, nil

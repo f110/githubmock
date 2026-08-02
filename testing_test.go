@@ -16,7 +16,6 @@ func TestBuildPushEvent(t *testing.T) {
 	repo := m.Repository("example/public-app")
 	repo.DefaultBranch("main")
 	commit := NewCommit().
-		SHA("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").
 		IsHead().
 		Files(&File{Name: "README.md", Body: []byte("v1")})
 	require.NoError(t, repo.Commits(commit))
@@ -27,6 +26,11 @@ func TestBuildPushEvent(t *testing.T) {
 	assert.Equal(t, "main", ev.GetRepo().GetMasterBranch())
 	assert.Equal(t, "main", ev.GetRepo().GetDefaultBranch())
 	assert.Equal(t, "http://127.0.0.1:5621/example/public-app.git", ev.GetRepo().GetCloneURL())
+
+	// The push payload must report the git-computed commit SHA (what the git
+	// protocol serves), not a declared one.
+	assert.Len(t, commit.GetSHA(), 40)
+	assert.Equal(t, commit.GetSHA(), ev.GetHeadCommit().GetID())
 }
 
 func TestMock(t *testing.T) {
@@ -224,11 +228,11 @@ func TestMock(t *testing.T) {
 	t.Run("MultipleCommitsWithParents", func(t *testing.T) {
 		m := NewMock()
 		repo := m.Repository("f110/gh-test")
-		root := NewCommit().SHA("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").
+		root := NewCommit().
 			Files(&File{Name: "README.md", Body: []byte("v1")})
 		require.NoError(t, repo.Commits(root))
 
-		child := NewCommit().SHA("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").
+		child := NewCommit().
 			Parents(root).
 			IsHead().
 			Files(&File{Name: "README.md", Body: []byte("v2")})

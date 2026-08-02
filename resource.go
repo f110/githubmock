@@ -89,14 +89,6 @@ func NewCommit() *Commit {
 	}
 }
 
-func (c *Commit) SHA(v string) *Commit {
-	if v == "" {
-		return c
-	}
-	c.ghCommit.SHA = new(v)
-	return c
-}
-
 func (c *Commit) GetSHA() string {
 	return c.ghCommit.GetSHA()
 }

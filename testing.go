@@ -270,10 +270,6 @@ func (r *Repository) Commits(commits ...*Commit) error {
 			headCommit = v
 		}
 
-		if v.ghCommit.GetSHA() == "" {
-			v.ghCommit.SHA = new(newHash())
-		}
-		v.ghCommit.Tree = &github.Tree{SHA: new(v.files[0].sha)}
 		for _, f := range v.files {
 			if f.Name == "" {
 				continue
@@ -304,6 +300,22 @@ func (r *Repository) Commits(commits ...*Commit) error {
 		}
 		if v.isHead {
 			r.headCommit = v
+		}
+	}
+
+	// Record the git-computed commit and tree hashes on each commit so the API
+	// and webhook payloads report the same SHAs the git protocol serves.
+	_, hashes, err := computeGitObjects(r.commits, r.headCommit, r.ghRepository.GetDefaultBranch())
+	if err != nil {
+		return err
+	}
+	for c, h := range hashes {
+		c.ghCommit.SHA = new(h.commit.String())
+		c.ghCommit.Tree = &github.Tree{SHA: new(h.tree.String())}
+		for _, f := range c.files {
+			if gh, ok := h.files[f.Name]; ok {
+				f.sha = gh.String()
+			}
 		}
 	}
 	return nil
