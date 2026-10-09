@@ -1,7 +1,9 @@
 package githubmock
 
 import (
+	"io"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -271,6 +273,97 @@ func TestMock(t *testing.T) {
 			status, _, err := ghClient.Repositories.CreateStatus(t.Context(), "f110", "gh-test", "HEAD", github.RepoStatus{State: new("success")})
 			require.NoError(t, err)
 			assert.NotEmpty(t, *status.State)
+		})
+
+		t.Run("GetBranch", func(t *testing.T) {
+			branch, _, err := ghClient.Repositories.GetBranch(t.Context(), "f110", "gh-test", "main", 0)
+			require.NoError(t, err)
+			assert.Equal(t, "main", branch.GetName())
+			assert.Equal(t, repo.GetCommits()[0].GetSHA(), branch.GetCommit().GetSHA())
+
+			_, res, err := ghClient.Repositories.GetBranch(t.Context(), "f110", "gh-test", "unknown", 0)
+			require.Error(t, err)
+			assert.Equal(t, http.StatusNotFound, res.StatusCode)
+		})
+
+		t.Run("Releases", func(t *testing.T) {
+			repo.Releases(
+				NewRelease().
+					TagName("v1.0.0").
+					Body("v1.0.0 release").
+					Assets(&ReleaseAsset{Name: "bin", Body: []byte("binary")}),
+			)
+
+			t.Run("GetReleaseByTag", func(t *testing.T) {
+				release, _, err := ghClient.Repositories.GetReleaseByTag(t.Context(), "f110", "gh-test", "v1.0.0")
+				require.NoError(t, err)
+				assert.NotZero(t, release.GetID())
+				assert.Equal(t, "v1.0.0 release", release.GetBody())
+				require.Len(t, release.Assets, 1)
+				assert.Equal(t, "bin", release.Assets[0].GetName())
+
+				_, res, err := ghClient.Repositories.GetReleaseByTag(t.Context(), "f110", "gh-test", "v0.0.1")
+				require.Error(t, err)
+				assert.Equal(t, http.StatusNotFound, res.StatusCode)
+			})
+
+			t.Run("CreateRelease", func(t *testing.T) {
+				release, _, err := ghClient.Repositories.CreateRelease(t.Context(), "f110", "gh-test", &github.RepositoryRelease{
+					TagName:         new("v1.1.0-rc.1"),
+					TargetCommitish: new("main"),
+					Body:            new("rc"),
+					Prerelease:      new(true),
+				})
+				require.NoError(t, err)
+				assert.NotZero(t, release.GetID())
+
+				r := repo.GetRelease("v1.1.0-rc.1")
+				require.NotNil(t, r)
+				assert.Equal(t, release.GetID(), r.GetID())
+				assert.Equal(t, "main", r.GetTargetCommitish())
+				assert.Equal(t, "rc", r.GetBody())
+				assert.True(t, r.IsPrerelease())
+
+				_, res, err := ghClient.Repositories.CreateRelease(t.Context(), "f110", "gh-test", &github.RepositoryRelease{TagName: new("v1.0.0")})
+				require.Error(t, err)
+				assert.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
+			})
+
+			t.Run("EditRelease", func(t *testing.T) {
+				r := repo.GetRelease("v1.0.0")
+				release, _, err := ghClient.Repositories.EditRelease(t.Context(), "f110", "gh-test", r.GetID(), &github.RepositoryRelease{Body: new("updated")})
+				require.NoError(t, err)
+				assert.Equal(t, "updated", release.GetBody())
+				assert.Equal(t, "updated", r.GetBody())
+				assert.Equal(t, "v1.0.0", r.GetTagName())
+			})
+
+			t.Run("UploadReleaseAsset", func(t *testing.T) {
+				f, err := os.CreateTemp(t.TempDir(), "")
+				require.NoError(t, err)
+				_, err = f.Write([]byte("manifest"))
+				require.NoError(t, err)
+				_, err = f.Seek(0, io.SeekStart)
+				require.NoError(t, err)
+
+				r := repo.GetRelease("v1.0.0")
+				asset, _, err := ghClient.Repositories.UploadReleaseAsset(t.Context(), "f110", "gh-test", r.GetID(), &github.UploadOptions{Name: "manifest.yaml"}, f)
+				require.NoError(t, err)
+				assert.NotZero(t, asset.GetID())
+				assert.Equal(t, "manifest.yaml", asset.GetName())
+				assert.Equal(t, 8, asset.GetSize())
+
+				assets := r.GetAssets()
+				require.Len(t, assets, 2)
+				assert.Equal(t, "manifest.yaml", assets[1].Name)
+				assert.Equal(t, []byte("manifest"), assets[1].Body)
+
+				_, err = f.Seek(0, io.SeekStart)
+				require.NoError(t, err)
+				_, res, err := ghClient.Repositories.UploadReleaseAsset(t.Context(), "f110", "gh-test", r.GetID(), &github.UploadOptions{Name: "manifest.yaml"}, f)
+				require.Error(t, err)
+				assert.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
+			})
 		})
 	})
 

@@ -42,6 +42,7 @@ type Repository struct {
 	commits      []*Commit
 	webhooks     []*Webhook
 	stacks       []*Stack
+	releases     []*Release
 
 	headCommit *Commit
 	rootCommit *Commit
@@ -325,6 +326,89 @@ func (r *Repository) Tags(tags ...*Tag) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.tags = append(r.tags, tags...)
+}
+
+func (r *Repository) Releases(releases ...*Release) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, v := range releases {
+		if v.ghRelease.GetID() == 0 {
+			v.ghRelease.ID = new(r.nextReleaseID())
+		}
+		r.releases = append(r.releases, v)
+		for _, a := range v.assets {
+			if a.id == 0 {
+				a.id = r.nextReleaseAssetID()
+			}
+		}
+	}
+}
+
+func (r *Repository) GetReleases() []*Release {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*Release, len(r.releases))
+	copy(out, r.releases)
+	return out
+}
+
+func (r *Repository) GetRelease(tag string) *Release {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, v := range r.releases {
+		if v.GetTagName() == tag {
+			return v
+		}
+	}
+	return nil
+}
+
+func (r *Repository) getReleaseByID(id int64) *Release {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, v := range r.releases {
+		if v.GetID() == id {
+			return v
+		}
+	}
+	return nil
+}
+
+// addReleaseAsset appends the asset to the release.
+// It returns false when the release already has an asset with the same name.
+func (r *Repository) addReleaseAsset(release *Release, asset *ReleaseAsset) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, v := range release.assets {
+		if v.Name == asset.Name {
+			return false
+		}
+	}
+	asset.id = r.nextReleaseAssetID()
+	release.assets = append(release.assets, asset)
+	return true
+}
+
+func (r *Repository) nextReleaseID() int64 {
+	var last int64
+	for _, v := range r.releases {
+		if v.GetID() > last {
+			last = v.GetID()
+		}
+	}
+	return last + 1
+}
+
+func (r *Repository) nextReleaseAssetID() int64 {
+	var last int64
+	for _, v := range r.releases {
+		for _, a := range v.assets {
+			if a.id > last {
+				last = a.id
+			}
+		}
+	}
+	return last + 1
 }
 
 func (r *Repository) DefaultBranch(v string) {
@@ -1151,6 +1235,136 @@ func (m *Mock) registerRepositoriesService(mux *http.ServeMux) {
 		commit.ghStatuses = append(commit.ghStatuses, &status)
 		m.jsonResponse(req.Context(), w, http.StatusOK, status)
 	})
+	// Get a branch
+	// GET /repos/octocat/example/branches/{branch}
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/branches/{branch...}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		name := req.PathValue("branch")
+		if name != r.ghRepository.GetDefaultBranch() || r.headCommit == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		branch := &github.Branch{
+			Name:   new(name),
+			Commit: &github.RepositoryCommit{SHA: r.headCommit.ghCommit.SHA, Commit: r.headCommit.ghCommit},
+		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, branch)
+	})
+	// Get a release by tag name
+	// GET /repos/octocat/example/releases/tags/{tag}
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/releases/tags/{tag...}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		release := r.GetRelease(req.PathValue("tag"))
+		if release == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, release.toGithubRelease())
+	})
+	// Create a release
+	// POST /repos/octocat/example/releases
+	m.registerHandleFunc(mux, "POST /repos/{owner}/{repo}/releases", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		var reqRelease github.RepositoryRelease
+		if err := json.NewDecoder(req.Body).Decode(&reqRelease); err != nil {
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
+		}
+		if reqRelease.GetTagName() == "" {
+			m.errResponse(req.Context(), w, http.StatusUnprocessableEntity, "tag_name is missing")
+		}
+		if r.GetRelease(reqRelease.GetTagName()) != nil {
+			m.errResponse(req.Context(), w, http.StatusUnprocessableEntity, "Release with tag_name already exists")
+		}
+
+		release := &Release{ghRelease: &github.RepositoryRelease{
+			TagName:         reqRelease.TagName,
+			TargetCommitish: reqRelease.TargetCommitish,
+			Name:            reqRelease.Name,
+			Body:            reqRelease.Body,
+			Draft:           reqRelease.Draft,
+			Prerelease:      reqRelease.Prerelease,
+		}}
+		r.Releases(release)
+		m.jsonResponse(req.Context(), w, http.StatusCreated, release.toGithubRelease())
+	})
+	// Update a release
+	// PATCH /repos/octocat/example/releases/{id}
+	m.registerHandleFunc(mux, "PATCH /repos/{owner}/{repo}/releases/{id}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		release := m.findRelease(w, req, r)
+		var reqRelease github.RepositoryRelease
+		if err := json.NewDecoder(req.Body).Decode(&reqRelease); err != nil {
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
+		}
+
+		r.mu.Lock()
+		if reqRelease.TagName != nil {
+			release.ghRelease.TagName = reqRelease.TagName
+		}
+		if reqRelease.TargetCommitish != nil {
+			release.ghRelease.TargetCommitish = reqRelease.TargetCommitish
+		}
+		if reqRelease.Name != nil {
+			release.ghRelease.Name = reqRelease.Name
+		}
+		if reqRelease.Body != nil {
+			release.ghRelease.Body = reqRelease.Body
+		}
+		if reqRelease.Draft != nil {
+			release.ghRelease.Draft = reqRelease.Draft
+		}
+		if reqRelease.Prerelease != nil {
+			release.ghRelease.Prerelease = reqRelease.Prerelease
+		}
+		res := release.toGithubRelease()
+		r.mu.Unlock()
+		m.jsonResponse(req.Context(), w, http.StatusOK, res)
+	})
+	// Upload a release asset
+	// POST /repos/octocat/example/releases/{id}/assets?name={name}
+	m.registerHandleFunc(mux, "POST /repos/{owner}/{repo}/releases/{id}/assets", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		release := m.findRelease(w, req, r)
+		name := req.URL.Query().Get("name")
+		if name == "" {
+			m.errResponse(req.Context(), w, http.StatusUnprocessableEntity, "name is missing")
+		}
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
+		}
+
+		asset := &ReleaseAsset{Name: name, Body: body}
+		if !r.addReleaseAsset(release, asset) {
+			m.errResponse(req.Context(), w, http.StatusUnprocessableEntity, "Asset with the same name already exists")
+		}
+		m.jsonResponse(req.Context(), w, http.StatusCreated, asset.toGithubReleaseAsset())
+	})
+}
+
+func (m *Mock) findRelease(w http.ResponseWriter, req *http.Request, r *Repository) *Release {
+	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
+	if err != nil {
+		m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
+	}
+	release := r.getReleaseByID(id)
+	if release == nil {
+		m.notFoundResponse(req.Context(), w)
+	}
+	return release
 }
 
 func (m *Mock) registerIssuesService(mux *http.ServeMux) {

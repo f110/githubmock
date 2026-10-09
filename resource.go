@@ -415,6 +415,92 @@ func (t *Tag) toGithubTag() *github.Tag {
 	return t.ghTag
 }
 
+type Release struct {
+	ghRelease *github.RepositoryRelease
+	assets    []*ReleaseAsset
+}
+
+func NewRelease() *Release {
+	return &Release{ghRelease: &github.RepositoryRelease{}}
+}
+
+func (r *Release) TagName(v string) *Release {
+	if v == "" {
+		return r
+	}
+	r.ghRelease.TagName = new(v)
+	return r
+}
+
+func (r *Release) Body(v string) *Release {
+	r.ghRelease.Body = new(v)
+	return r
+}
+
+func (r *Release) Prerelease() *Release {
+	r.ghRelease.Prerelease = new(true)
+	return r
+}
+
+func (r *Release) Assets(assets ...*ReleaseAsset) *Release {
+	r.assets = append(r.assets, assets...)
+	return r
+}
+
+func (r *Release) GetID() int64 {
+	return r.ghRelease.GetID()
+}
+
+func (r *Release) GetTagName() string {
+	return r.ghRelease.GetTagName()
+}
+
+func (r *Release) GetTargetCommitish() string {
+	return r.ghRelease.GetTargetCommitish()
+}
+
+func (r *Release) GetBody() string {
+	return r.ghRelease.GetBody()
+}
+
+func (r *Release) IsPrerelease() bool {
+	return r.ghRelease.GetPrerelease()
+}
+
+func (r *Release) GetAssets() []*ReleaseAsset {
+	out := make([]*ReleaseAsset, len(r.assets))
+	copy(out, r.assets)
+	return out
+}
+
+func (r *Release) toGithubRelease() *github.RepositoryRelease {
+	release := *r.ghRelease
+	release.Assets = make([]*github.ReleaseAsset, 0, len(r.assets))
+	for _, v := range r.assets {
+		release.Assets = append(release.Assets, v.toGithubReleaseAsset())
+	}
+	return &release
+}
+
+type ReleaseAsset struct {
+	Name string
+	Body []byte
+
+	id int64
+}
+
+func (a *ReleaseAsset) GetID() int64 {
+	return a.id
+}
+
+func (a *ReleaseAsset) toGithubReleaseAsset() *github.ReleaseAsset {
+	return &github.ReleaseAsset{
+		ID:   new(a.id),
+		Name: new(a.Name),
+		Size: new(len(a.Body)),
+	}
+}
+
 type Comment struct {
 	ghComment *github.IssueComment
 }
