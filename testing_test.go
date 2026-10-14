@@ -367,6 +367,148 @@ func TestMock(t *testing.T) {
 		})
 	})
 
+	t.Run("BranchesAndContents", func(t *testing.T) {
+		setup := func(t *testing.T) (*Repository, *github.Client) {
+			m := NewMock()
+			repo := m.Repository("f110/gh-test")
+			repo.DefaultBranch("main")
+			err := repo.Commits(
+				NewCommit().
+					IsHead().
+					Files(&File{Name: "README.md", Body: []byte("README")}, &File{Name: "docs/index.md", Body: []byte("index")}),
+			)
+			require.NoError(t, err)
+			return repo, github.NewClient(&http.Client{Transport: m.Transport()})
+		}
+
+		t.Run("CreateRef", func(t *testing.T) {
+			repo, ghClient := setup(t)
+			head := repo.GetCommits()[0]
+
+			ref, _, err := ghClient.Git.CreateRef(t.Context(), "f110", "gh-test", github.CreateRef{Ref: "refs/heads/release-v1.0", SHA: head.GetSHA()})
+			require.NoError(t, err)
+			assert.Equal(t, "refs/heads/release-v1.0", ref.GetRef())
+			assert.Equal(t, head.GetSHA(), ref.GetObject().GetSHA())
+			assert.Equal(t, head, repo.GetBranch("release-v1.0"))
+
+			branch, _, err := ghClient.Repositories.GetBranch(t.Context(), "f110", "gh-test", "release-v1.0", 0)
+			require.NoError(t, err)
+			assert.Equal(t, "release-v1.0", branch.GetName())
+			assert.Equal(t, head.GetSHA(), branch.GetCommit().GetSHA())
+
+			_, res, err := ghClient.Git.CreateRef(t.Context(), "f110", "gh-test", github.CreateRef{Ref: "refs/heads/release-v1.0", SHA: head.GetSHA()})
+			require.Error(t, err)
+			assert.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
+
+			_, res, err = ghClient.Git.CreateRef(t.Context(), "f110", "gh-test", github.CreateRef{Ref: "refs/heads/release-v1.1", SHA: "unknown"})
+			require.Error(t, err)
+			assert.Equal(t, http.StatusUnprocessableEntity, res.StatusCode)
+		})
+
+		t.Run("Branch", func(t *testing.T) {
+			repo, ghClient := setup(t)
+			head := repo.GetCommits()[0]
+			repo.Branch("release-v1.0", head)
+
+			branch, _, err := ghClient.Repositories.GetBranch(t.Context(), "f110", "gh-test", "release-v1.0", 0)
+			require.NoError(t, err)
+			assert.Equal(t, head.GetSHA(), branch.GetCommit().GetSHA())
+		})
+
+		t.Run("GetContents", func(t *testing.T) {
+			repo, ghClient := setup(t)
+			repo.Branch("release-v1.0", repo.GetCommits()[0])
+
+			for _, ref := range []string{"", "main", "release-v1.0"} {
+				file, _, _, err := ghClient.Repositories.GetContents(t.Context(), "f110", "gh-test", "docs/index.md", &github.RepositoryContentGetOptions{Ref: ref})
+				require.NoError(t, err, "ref=%s", ref)
+				body, err := file.GetContent()
+				require.NoError(t, err)
+				assert.Equal(t, "index", body)
+				assert.Equal(t, "docs/index.md", file.GetPath())
+				assert.Equal(t, "index.md", file.GetName())
+				assert.NotEmpty(t, file.GetSHA())
+			}
+
+			_, _, res, err := ghClient.Repositories.GetContents(t.Context(), "f110", "gh-test", "unknown.md", nil)
+			require.Error(t, err)
+			assert.Equal(t, http.StatusNotFound, res.StatusCode)
+
+			_, _, res, err = ghClient.Repositories.GetContents(t.Context(), "f110", "gh-test", "README.md", &github.RepositoryContentGetOptions{Ref: "unknown"})
+			require.Error(t, err)
+			assert.Equal(t, http.StatusNotFound, res.StatusCode)
+		})
+
+		t.Run("UpdateFile", func(t *testing.T) {
+			repo, ghClient := setup(t)
+			head := repo.GetCommits()[0]
+			repo.Branch("release-v1.0", head)
+			file, _, _, err := ghClient.Repositories.GetContents(t.Context(), "f110", "gh-test", "docs/index.md", &github.RepositoryContentGetOptions{Ref: "release-v1.0"})
+			require.NoError(t, err)
+
+			res, _, err := ghClient.Repositories.UpdateFile(t.Context(), "f110", "gh-test", "docs/index.md", &github.RepositoryContentFileOptions{
+				Message: new("Update index"),
+				Content: []byte("updated"),
+				SHA:     file.SHA,
+				Branch:  new("release-v1.0"),
+			})
+			require.NoError(t, err)
+			assert.NotEmpty(t, res.GetContent().GetSHA())
+			assert.NotEqual(t, file.GetSHA(), res.GetContent().GetSHA())
+
+			commit := repo.GetBranch("release-v1.0")
+			require.NotNil(t, commit)
+			assert.Equal(t, commit.GetSHA(), res.Commit.GetSHA())
+			assert.Equal(t, "Update index", res.Commit.GetMessage())
+			assert.Equal(t, head.GetSHA(), firstParentSHA(commit))
+
+			updated, _, _, err := ghClient.Repositories.GetContents(t.Context(), "f110", "gh-test", "docs/index.md", &github.RepositoryContentGetOptions{Ref: "release-v1.0"})
+			require.NoError(t, err)
+			body, err := updated.GetContent()
+			require.NoError(t, err)
+			assert.Equal(t, "updated", body)
+			readme, _, _, err := ghClient.Repositories.GetContents(t.Context(), "f110", "gh-test", "README.md", &github.RepositoryContentGetOptions{Ref: "release-v1.0"})
+			require.NoError(t, err)
+			body, err = readme.GetContent()
+			require.NoError(t, err)
+			assert.Equal(t, "README", body)
+
+			original, _, _, err := ghClient.Repositories.GetContents(t.Context(), "f110", "gh-test", "docs/index.md", &github.RepositoryContentGetOptions{Ref: "main"})
+			require.NoError(t, err)
+			body, err = original.GetContent()
+			require.NoError(t, err)
+			assert.Equal(t, "index", body)
+
+			_, r, err := ghClient.Repositories.UpdateFile(t.Context(), "f110", "gh-test", "docs/index.md", &github.RepositoryContentFileOptions{
+				Message: new("Update index"),
+				Content: []byte("conflict"),
+				SHA:     file.SHA,
+				Branch:  new("release-v1.0"),
+			})
+			require.Error(t, err)
+			assert.Equal(t, http.StatusConflict, r.StatusCode)
+		})
+
+		t.Run("UpdateFileOnDefaultBranch", func(t *testing.T) {
+			repo, ghClient := setup(t)
+			head := repo.GetCommits()[0]
+			file, _, _, err := ghClient.Repositories.GetContents(t.Context(), "f110", "gh-test", "README.md", nil)
+			require.NoError(t, err)
+
+			res, _, err := ghClient.Repositories.UpdateFile(t.Context(), "f110", "gh-test", "README.md", &github.RepositoryContentFileOptions{
+				Message: new("Update README"),
+				Content: []byte("updated"),
+				SHA:     file.SHA,
+			})
+			require.NoError(t, err)
+
+			branch, _, err := ghClient.Repositories.GetBranch(t.Context(), "f110", "gh-test", "main", 0)
+			require.NoError(t, err)
+			assert.Equal(t, res.Commit.GetSHA(), branch.GetCommit().GetSHA())
+			assert.NotEqual(t, head.GetSHA(), branch.GetCommit().GetSHA())
+		})
+	})
+
 	t.Run("IssuesService", func(t *testing.T) {
 		m := NewMock()
 		repo := m.Repository("f110/gh-test")
