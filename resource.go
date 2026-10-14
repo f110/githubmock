@@ -1,6 +1,8 @@
 package githubmock
 
 import (
+	"encoding/base64"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -121,6 +123,15 @@ func (c *Commit) Statuses(statuses ...*CommitStatus) *Commit {
 	return c
 }
 
+func (c *Commit) file(path string) *File {
+	for _, v := range c.files {
+		if v.Name == path && v.mode == fileTypeRegular {
+			return v
+		}
+	}
+	return nil
+}
+
 func (c *Commit) addDir(dir string) {
 	for _, v := range c.files {
 		if v.Name == dir {
@@ -154,6 +165,21 @@ type File struct {
 
 	sha  string
 	mode fileType
+}
+
+func (f *File) toGithubContent(withContent bool) *github.RepositoryContent {
+	content := &github.RepositoryContent{
+		Type: new("file"),
+		Name: new(path.Base(f.Name)),
+		Path: new(f.Name),
+		SHA:  new(f.sha),
+		Size: new(len(f.Body)),
+	}
+	if withContent {
+		content.Encoding = new("base64")
+		content.Content = new(base64.StdEncoding.EncodeToString(f.Body))
+	}
+	return content
 }
 
 type CommitState string

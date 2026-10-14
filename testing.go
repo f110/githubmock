@@ -43,6 +43,8 @@ type Repository struct {
 	webhooks     []*Webhook
 	stacks       []*Stack
 	releases     []*Release
+	// branches holds the branches other than the default branch. The default branch always points at headCommit.
+	branches map[string]*Commit
 
 	headCommit *Commit
 	rootCommit *Commit
@@ -255,6 +257,10 @@ func (r *Repository) Commits(commits ...*Commit) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	return r.addCommits(commits...)
+}
+
+func (r *Repository) addCommits(commits ...*Commit) error {
 	newCommits := append(r.commits, commits...)
 	var rootCommit, headCommit *Commit
 	for _, v := range newCommits {
@@ -272,7 +278,7 @@ func (r *Repository) Commits(commits ...*Commit) error {
 		}
 
 		for _, f := range v.files {
-			if f.Name == "" {
+			if f.Name == "" || f.mode == fileTypeDir {
 				continue
 			}
 
@@ -320,6 +326,116 @@ func (r *Repository) Commits(commits ...*Commit) error {
 		}
 	}
 	return nil
+}
+
+// Branch makes the branch other than the default branch point at the commit.
+// The default branch always points at the head commit.
+func (r *Repository) Branch(name string, commit *Commit) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.branches == nil {
+		r.branches = make(map[string]*Commit)
+	}
+	r.branches[name] = commit
+}
+
+// GetBranch returns the commit which the branch points at. It returns nil when the branch is not found.
+func (r *Repository) GetBranch(name string) *Commit {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.branchCommit(name)
+}
+
+func (r *Repository) branchCommit(name string) *Commit {
+	if name == r.ghRepository.GetDefaultBranch() {
+		return r.headCommit
+	}
+	return r.branches[name]
+}
+
+// resolveRef returns the commit which the ref points at. The ref is a branch name or a commit SHA.
+// An empty ref means the default branch.
+func (r *Repository) resolveRef(ref string) *Commit {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ref == "" {
+		return r.headCommit
+	}
+	if c := r.branchCommit(ref); c != nil {
+		return c
+	}
+	for _, c := range r.commits {
+		if c.GetSHA() == ref {
+			return c
+		}
+	}
+	return nil
+}
+
+var (
+	errBranchAlreadyExists = errors.New("branch already exists")
+	errBranchNotFound      = errors.New("branch not found")
+	errCommitNotFound      = errors.New("commit not found")
+	errFileSHAMismatch     = errors.New("sha does not match")
+)
+
+func (r *Repository) createBranch(name, sha string) (*Commit, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.branchCommit(name) != nil {
+		return nil, errBranchAlreadyExists
+	}
+	for _, c := range r.commits {
+		if c.GetSHA() == sha {
+			if r.branches == nil {
+				r.branches = make(map[string]*Commit)
+			}
+			r.branches[name] = c
+			return c, nil
+		}
+	}
+	return nil, errCommitNotFound
+}
+
+// commitFile creates a new commit that puts the body at the path on top of the branch, and moves the branch to it.
+// sha must be the blob SHA of the current file when the file already exists.
+// created reports whether the file did not exist on the branch.
+func (r *Repository) commitFile(branch, path string, body []byte, sha, message string) (commit *Commit, created bool, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	parent := r.branchCommit(branch)
+	if parent == nil {
+		return nil, false, errBranchNotFound
+	}
+	current := parent.file(path)
+	if current != nil && current.sha != sha {
+		return nil, false, errFileSHAMismatch
+	}
+
+	commit = &Commit{ghCommit: &github.Commit{Message: new(message)}}
+	for _, f := range parent.files {
+		if f.Name == path {
+			continue
+		}
+		commit.files = append(commit.files, &File{Name: f.Name, Body: f.Body, sha: f.sha, mode: f.mode})
+	}
+	commit.files = append(commit.files, &File{Name: path, Body: body})
+	commit.Parents(parent)
+
+	isDefault := branch == r.ghRepository.GetDefaultBranch()
+	if isDefault {
+		parent.isHead = false
+		commit.isHead = true
+	}
+	if err := r.addCommits(commit); err != nil {
+		parent.isHead = isDefault
+		return nil, false, err
+	}
+	if !isDefault {
+		r.branches[branch] = commit
+	}
+	return commit, current == nil, nil
 }
 
 func (r *Repository) Tags(tags ...*Tag) {
@@ -1140,6 +1256,36 @@ func (m *Mock) registerGitService(mux *http.ServeMux) {
 		}
 		m.notFoundResponse(req.Context(), w)
 	})
+	// Create a reference
+	// POST /repos/octocat/example/git/refs
+	m.registerHandleFunc(mux, "POST /repos/{owner}/{repo}/git/refs", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		var reqRef github.CreateRef
+		if err := json.NewDecoder(req.Body).Decode(&reqRef); err != nil {
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
+		}
+		ref := plumbing.ReferenceName(reqRef.Ref)
+		if !ref.IsBranch() {
+			m.errResponse(req.Context(), w, http.StatusUnprocessableEntity, "Only branches are supported")
+		}
+
+		commit, err := r.createBranch(ref.Short(), reqRef.SHA)
+		switch {
+		case errors.Is(err, errBranchAlreadyExists):
+			m.errResponse(req.Context(), w, http.StatusUnprocessableEntity, "Reference already exists")
+		case errors.Is(err, errCommitNotFound):
+			m.errResponse(req.Context(), w, http.StatusUnprocessableEntity, "Object does not exist")
+		case err != nil:
+			m.errResponse(req.Context(), w, http.StatusInternalServerError, err.Error())
+		}
+		m.jsonResponse(req.Context(), w, http.StatusCreated, &github.Reference{
+			Ref:    new(ref.String()),
+			Object: &github.GitObject{SHA: commit.ghCommit.SHA, Type: new("commit")},
+		})
+	})
 	// Get ref
 	// GET /repos/octocat/example/git/ref/tags/{sha}
 	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/git/ref/tags/{sha}", func(w http.ResponseWriter, req *http.Request) {
@@ -1243,14 +1389,66 @@ func (m *Mock) registerRepositoriesService(mux *http.ServeMux) {
 			m.notFoundResponse(req.Context(), w)
 		}
 		name := req.PathValue("branch")
-		if name != r.ghRepository.GetDefaultBranch() || r.headCommit == nil {
+		commit := r.GetBranch(name)
+		if commit == nil {
 			m.notFoundResponse(req.Context(), w)
 		}
 		branch := &github.Branch{
 			Name:   new(name),
-			Commit: &github.RepositoryCommit{SHA: r.headCommit.ghCommit.SHA, Commit: r.headCommit.ghCommit},
+			Commit: &github.RepositoryCommit{SHA: commit.ghCommit.SHA, Commit: commit.ghCommit},
 		}
 		m.jsonResponse(req.Context(), w, http.StatusOK, branch)
+	})
+	// Get repository content
+	// GET /repos/octocat/example/contents/{path}
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/contents/{path...}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		commit := r.resolveRef(req.URL.Query().Get("ref"))
+		if commit == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		f := commit.file(req.PathValue("path"))
+		if f == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, f.toGithubContent(true))
+	})
+	// Create or update file contents
+	// PUT /repos/octocat/example/contents/{path}
+	m.registerHandleFunc(mux, "PUT /repos/{owner}/{repo}/contents/{path...}", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		var opt github.RepositoryContentFileOptions
+		if err := json.NewDecoder(req.Body).Decode(&opt); err != nil {
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
+		}
+		branch := opt.GetBranch()
+		if branch == "" {
+			branch = r.ghRepository.GetDefaultBranch()
+		}
+		path := req.PathValue("path")
+		commit, created, err := r.commitFile(branch, path, opt.Content, opt.GetSHA(), opt.GetMessage())
+		switch {
+		case errors.Is(err, errBranchNotFound):
+			m.errResponse(req.Context(), w, http.StatusUnprocessableEntity, fmt.Sprintf("Branch %s not found", branch))
+		case errors.Is(err, errFileSHAMismatch):
+			m.errResponse(req.Context(), w, http.StatusConflict, fmt.Sprintf("%s does not match", opt.GetSHA()))
+		case err != nil:
+			m.errResponse(req.Context(), w, http.StatusInternalServerError, err.Error())
+		}
+		status := http.StatusOK
+		if created {
+			status = http.StatusCreated
+		}
+		m.jsonResponse(req.Context(), w, status, &github.RepositoryContentResponse{
+			Content: commit.file(path).toGithubContent(false),
+			Commit:  *commit.ghCommit,
+		})
 	})
 	// Get a release by tag name
 	// GET /repos/octocat/example/releases/tags/{tag}
