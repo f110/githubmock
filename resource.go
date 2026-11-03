@@ -103,6 +103,11 @@ func (c *Commit) Parents(parents ...*Commit) *Commit {
 	return c
 }
 
+func (c *Commit) Message(v string) *Commit {
+	c.ghCommit.Message = new(v)
+	return c
+}
+
 func (c *Commit) Files(files ...*File) *Commit {
 	c.files = append(c.files, files...)
 	return c
@@ -208,6 +213,7 @@ type PullRequest struct {
 	headRepo      *Repository
 	comments      []*github.PullRequestComment
 	reviews       []*github.PullRequestReview
+	commits       []*Commit
 }
 
 func NewPullRequest() *PullRequest {
@@ -320,6 +326,12 @@ func (pr *PullRequest) Reviews(reviews ...*Review) *PullRequest {
 	for _, v := range reviews {
 		pr.reviews = append(pr.reviews, v.ghReview)
 	}
+	return pr
+}
+
+// Commits sets the commits of the pull request. The commits have to be added to the repository by Repository.Commits.
+func (pr *PullRequest) Commits(commits ...*Commit) *PullRequest {
+	pr.commits = append(pr.commits, commits...)
 	return pr
 }
 

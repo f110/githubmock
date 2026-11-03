@@ -146,6 +146,28 @@ func TestMock(t *testing.T) {
 			require.NoError(t, err)
 			assert.Len(t, reviews, 1)
 		})
+
+		t.Run("ListCommits", func(t *testing.T) {
+			root := NewCommit().Message("root")
+			child := NewCommit().Message("child").Parents(root)
+			require.NoError(t, repo.Commits(root, child))
+			repo.GetPullRequest(1).Commits(root, child)
+
+			commits, _, err := ghClient.PullRequests.ListCommits(t.Context(), "f110", "gh-test", 1, nil)
+			require.NoError(t, err)
+			require.Len(t, commits, 2)
+			assert.Equal(t, root.GetSHA(), commits[0].GetSHA())
+			assert.Equal(t, "root", commits[0].GetCommit().GetMessage())
+			assert.Equal(t, child.GetSHA(), commits[1].GetSHA())
+			assert.Equal(t, "child", commits[1].GetCommit().GetMessage())
+
+			commits, _, err = ghClient.PullRequests.ListCommits(t.Context(), "f110", "gh-test", 2, nil)
+			require.NoError(t, err)
+			assert.Len(t, commits, 0)
+
+			_, _, err = ghClient.PullRequests.ListCommits(t.Context(), "f110", "gh-test", 100, nil)
+			require.Error(t, err)
+		})
 	})
 
 	t.Run("GitService", func(t *testing.T) {
