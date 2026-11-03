@@ -824,6 +824,27 @@ func (m *Mock) registerPullRequestService(mux *http.ServeMux) {
 		pr := r.GetPullRequest(num)
 		m.jsonResponse(req.Context(), w, http.StatusOK, pr.ghPullRequest)
 	})
+	// List commits on a pull request
+	// GET /repos/octocat/example/pulls/1/commits
+	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/pulls/{number}/commits", func(w http.ResponseWriter, req *http.Request) {
+		r := m.findRepository(req)
+		if r == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		num, err := strconv.Atoi(req.PathValue("number"))
+		if err != nil {
+			m.errResponse(req.Context(), w, http.StatusBadRequest, err.Error())
+		}
+		pr := r.GetPullRequest(num)
+		if pr == nil {
+			m.notFoundResponse(req.Context(), w)
+		}
+		commits := make([]*github.RepositoryCommit, len(pr.commits))
+		for i, c := range pr.commits {
+			commits[i] = &github.RepositoryCommit{SHA: c.ghCommit.SHA, Commit: c.ghCommit}
+		}
+		m.jsonResponse(req.Context(), w, http.StatusOK, commits)
+	})
 	// List pull requests
 	// GET /repos/octocat/example/pulls
 	m.registerHandleFunc(mux, "GET /repos/{owner}/{repo}/pulls", func(w http.ResponseWriter, req *http.Request) {
